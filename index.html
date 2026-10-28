@@ -531,7 +531,7 @@ async function crearEmpresa() {
 function mostrarClave(email, clave, titulo) {
   abrirModal(`
     <h3 class="text-lg font-bold mb-2">${esc(titulo)}</h3>
-    <p class="text-sm text-slate-300 mb-4">Pasale estos datos al cliente. <b>La contraseña no se vuelve a mostrar.</b></p>
+    <p class="text-sm text-slate-300 mb-4">Pasale estos datos a la persona que va a usar la cuenta. <b>La contraseña no se vuelve a mostrar.</b></p>
     <div class="bg-slate-900 rounded-xl p-4 font-mono text-sm space-y-1">
       <div><span class="text-slate-400">Panel:</span> ${esc(location.origin + location.pathname)}</div>
       <div><span class="text-slate-400">Email:</span> ${esc(email)}</div>
