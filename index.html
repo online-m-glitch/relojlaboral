@@ -9,26 +9,79 @@
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<meta name="theme-color" content="#F1F7F3">
 <style>
+  /* ===== Estilo "Bosque": claro, verde menta y verde pino ===== */
+  :root { --bg:#F1F7F3; --card:#FFFFFF; --suave:#F5FAF7; --borde:#D3E6DA; --borde2:#E4EFE8; --tinta:#12261A; --tinta2:#3F5547; --gris:#5F7468; --gris2:#8A9C91;
+          --pino:#166534; --pino2:#15803D; --menta:#E3F1E8; }
   body { font-family: 'Inter', sans-serif; }
-  .inp { width:100%; padding:.65rem .9rem; background:rgba(15,23,42,.6); border:1px solid #334155; border-radius:.75rem; color:#fff; outline:none; }
-  .inp:focus { border-color:#6366f1; box-shadow:0 0 0 3px rgba(99,102,241,.25); }
-  .lbl { display:block; font-size:.7rem; font-weight:600; color:#cbd5e1; text-transform:uppercase; letter-spacing:.04em; margin-bottom:.35rem; }
+  .inp { width:100%; padding:.65rem .9rem; background:#fff; border:1px solid #C5DCCD; border-radius:.75rem; color:var(--tinta); outline:none; }
+  .inp::placeholder { color:var(--gris2); }
+  .inp:focus { border-color:var(--pino); box-shadow:0 0 0 3px rgba(22,101,52,.15); }
+  .lbl { display:block; font-size:.7rem; font-weight:600; color:var(--tinta2); text-transform:uppercase; letter-spacing:.04em; margin-bottom:.35rem; }
   .btn { display:inline-flex; align-items:center; justify-content:center; gap:.45rem; padding:.55rem 1rem; border-radius:.7rem; font-weight:600; font-size:.85rem; transition:all .15s; cursor:pointer; }
   .btn:disabled { opacity:.5; cursor:not-allowed; }
-  .btn-pri { background:#4f46e5; color:#fff; } .btn-pri:hover:not(:disabled) { background:#6366f1; }
-  .btn-sec { background:#334155; color:#e2e8f0; } .btn-sec:hover:not(:disabled) { background:#475569; }
-  .btn-dan { background:rgba(239,68,68,.15); color:#fca5a5; } .btn-dan:hover:not(:disabled) { background:rgba(239,68,68,.3); }
+  .btn-pri { background:var(--pino); color:#fff; } .btn-pri:hover:not(:disabled) { background:var(--pino2); }
+  .btn-sec { background:#E7F0EA; color:var(--tinta); } .btn-sec:hover:not(:disabled) { background:#D6E6DC; }
+  .btn-dan { background:#FDE8E8; color:#B91C1C; } .btn-dan:hover:not(:disabled) { background:#FBD5D5; }
   .btn-sm { padding:.35rem .65rem; font-size:.75rem; }
-  .card { background:#1e293b; border:1px solid #334155; border-radius:1rem; }
+  .card { background:var(--card); border:1px solid var(--borde); border-radius:1rem; box-shadow:0 1px 2px rgba(18,38,26,.04); }
   .tbl { width:100%; font-size:.85rem; }
-  .tbl th { text-align:left; font-size:.7rem; text-transform:uppercase; color:#94a3b8; font-weight:600; padding:.6rem .75rem; border-bottom:1px solid #334155; white-space:nowrap; }
-  .tbl td { padding:.6rem .75rem; border-bottom:1px solid rgba(51,65,85,.5); }
-  .tbl tr:hover td { background:rgba(51,65,85,.25); }
-  .nav-item { display:flex; align-items:center; gap:.7rem; width:100%; padding:.6rem .8rem; border-radius:.7rem; font-size:.875rem; color:#cbd5e1; }
-  .nav-item:hover { background:#334155; } .nav-item.act { background:rgba(99,102,241,.2); color:#fff; }
+  .tbl th { text-align:left; font-size:.7rem; text-transform:uppercase; color:var(--gris); font-weight:600; padding:.6rem .75rem; border-bottom:1px solid var(--borde); white-space:nowrap; }
+  .tbl td { padding:.6rem .75rem; border-bottom:1px solid var(--borde2); }
+  .tbl tr:hover td { background:var(--suave); }
+  .nav-item { display:flex; align-items:center; gap:.7rem; width:100%; padding:.6rem .8rem; border-radius:.7rem; font-size:.875rem; color:var(--tinta2); }
+  .nav-item:hover { background:#E7F0EA; } .nav-item.act { background:var(--menta); color:var(--pino); font-weight:600; }
   .badge { display:inline-block; padding:.15rem .55rem; border-radius:999px; font-size:.7rem; font-weight:600; }
-  .qrbox canvas, .qrbox img { background:#fff; padding:8px; border-radius:.6rem; }
+  .qrbox canvas, .qrbox img { background:#fff; padding:8px; border-radius:.6rem; border:1px solid var(--borde); }
+  details summary::marker { color:var(--pino); }
+
+  /* Traducción de las clases de Tailwind al estilo Bosque (más específicas que las de Tailwind) */
+  html body.bg-slate-900, html body .bg-slate-900 { background:var(--bg); }
+  html body .text-slate-100, html body.text-slate-100 { color:var(--tinta); }
+  html body .bg-slate-800, html body .bg-slate-800\/80 { background:#fff; }
+  html body .bg-slate-900\/60 { background:var(--suave); }
+  html body .bg-slate-600\/40 { background:#ECF1EE; }
+  html body .bg-gradient-to-br { background:linear-gradient(135deg, #F1F7F3 0%, #E6F2EA 55%, #D9EEE1 100%); }
+  html body .bg-black\/60 { background:rgba(18,38,26,.45); }
+  html body .text-white, html body .hover\:text-white:hover { color:var(--tinta); }
+  html body .text-slate-300 { color:var(--tinta2); }
+  html body .text-slate-400 { color:var(--gris); }
+  html body .text-slate-500 { color:var(--gris2); }
+  html body .border-slate-700, html body .border-slate-700\/60, html body .border-slate-600 { border-color:var(--borde); }
+  html body .hover\:bg-slate-700:hover { background:#E7F0EA; }
+  html body .hover\:border-indigo-500:hover { border-color:var(--pino); }
+  html body .hover\:text-indigo-300:hover { color:var(--pino); }
+  /* Acento (antes índigo) → verde pino */
+  html body .text-indigo-200, html body .text-indigo-300, html body .text-indigo-400 { color:var(--pino); }
+  html body .bg-indigo-600\/20, html body .bg-indigo-500\/10, html body .bg-indigo-500\/15, html body .bg-indigo-500\/20 { background:var(--menta); }
+  html body .border-indigo-500\/30 { border-color:#A7D3B5; }
+  html body .peer:checked ~ .peer-checked\:bg-indigo-600 { background:var(--pino); }
+  html body .peer:checked ~ .peer-checked\:border-indigo-500 { border-color:var(--pino); }
+  html body .peer:checked ~ .peer-checked\:text-white { color:#fff; }
+  /* Estados */
+  html body .text-emerald-200, html body .text-emerald-300, html body .text-emerald-400 { color:#166534; }
+  html body .bg-emerald-500\/15, html body .bg-emerald-500\/20 { background:var(--menta); }
+  html body .text-amber-200, html body .text-amber-300, html body .text-amber-400 { color:#92400E; }
+  html body .bg-amber-500\/10, html body .bg-amber-500\/15, html body .bg-amber-500\/20 { background:#FEF3C7; }
+  html body .border-amber-500\/30 { border-color:#FCD34D; }
+  html body .text-red-300, html body .text-red-400 { color:#B91C1C; }
+  html body .bg-red-500\/15 { background:#FDE8E8; }
+  html body .text-sky-200, html body .text-sky-300, html body .text-sky-400 { color:#075985; }
+  html body .bg-sky-500\/10, html body .bg-sky-500\/15 { background:#E0F2FE; }
+  html body .border-sky-500\/30 { border-color:#7DD3FC; }
+  html body .text-violet-300 { color:#5B21B6; }
+  html body .bg-violet-500\/15 { background:#EDE9FE; }
+  html body .text-orange-300, html body .text-orange-400 { color:#9A3412; }
+  html body .bg-orange-500\/15 { background:#FFEDD5; }
+  html body .text-rose-300 { color:#991B1B; }
+  html body .bg-rose-500\/20 { background:#FDE8E8; }
+  /* Botones sólidos: Entrada verde pino, Salida rojo suave */
+  html body .bg-emerald-600 { background:var(--pino); color:#fff; }
+  html body .hover\:bg-emerald-500:hover { background:var(--pino2); }
+  html body .bg-rose-600 { background:#FDE8E8; color:#991B1B; border:1px solid #F8C9C9; }
+  html body .hover\:bg-rose-500:hover { background:#FBD5D5; }
+  html body .bg-red-600 { background:#B91C1C; color:#fff; }
 </style>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col">
@@ -207,7 +260,7 @@ const linkQR = tok => {
 
 function toast(msg, tipo = "ok") {
   const t = $("toast");
-  t.innerHTML = `<div class="px-4 py-3 rounded-xl shadow-2xl text-sm font-medium ${tipo === "error" ? "bg-red-600" : "bg-emerald-600"}">${esc(msg)}</div>`;
+  t.innerHTML = `<div class="px-4 py-3 rounded-xl shadow-2xl text-sm font-medium ${tipo === "error" ? "bg-red-600" : "bg-emerald-600"} text-white">${esc(msg)}</div>`;
   t.classList.remove("hidden"); clearTimeout(t._t); t._t = setTimeout(() => t.classList.add("hidden"), 3500);
 }
 function abrirModal(html, { fijo = false } = {}) {
