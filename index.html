@@ -53,7 +53,22 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 const fFecha = ts => ts ? new Date(ts).toLocaleDateString("es-AR", { timeZone: ZONA, day:"2-digit", month:"2-digit", year:"numeric" }) : "—";
 const fHora = ts => ts ? new Date(ts).toLocaleTimeString("es-AR", { timeZone: ZONA, hour:"2-digit", minute:"2-digit", hour12:false }) : "—";
+const fMinCorto = m => m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m` : `${m} min`;
 const fMin = m => { m = Math.max(0, Math.round(m || 0)); return Math.floor(m/60) + "h " + String(m%60).padStart(2,"0") + "m"; };
+const DIAS = [[1, "L", "Lunes"], [2, "M", "Martes"], [3, "X", "Miércoles"], [4, "J", "Jueves"], [5, "V", "Viernes"], [6, "S", "Sábado"], [7, "D", "Domingo"]];
+const hm = t => t ? String(t).slice(0, 5) : "—";
+function fDias(d) {
+  const a = [...(d || [])].map(Number).sort();
+  const k = a.join(",");
+  if (!a.length) return "Sin días";
+  if (k === "1,2,3,4,5") return "L a V";
+  if (k === "1,2,3,4,5,6") return "L a S";
+  if (k === "1,2,3,4,5,6,7") return "Todos los días";
+  return a.map(n => DIAS[n - 1][1]).join(" ");
+}
+const fHorario = c => `${hm(c.hora_entrada)}–${hm(c.hora_salida)}${c.hora_salida && c.hora_entrada && c.hora_salida <= c.hora_entrada ? " (noche)" : ""}`;
+const dowHoy = () => { const d = new Date(new Date().toLocaleString("en-US", { timeZone: ZONA })).getDay(); return d === 0 ? 7 : d; };
+const minutosAhora = () => { const [h, m] = new Date().toLocaleTimeString("en-GB", { timeZone: ZONA, hour: "2-digit", minute: "2-digit", hour12: false }).split(":").map(Number); return h * 60 + m; };
 const hoyISO = () => new Date().toLocaleDateString("en-CA", { timeZone: ZONA });
 const sumarDias = (iso, d) => { const x = new Date(iso + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + d); return x.toISOString().slice(0,10); };
 const linkQR = tok => {
@@ -247,7 +262,7 @@ function cardEmpresa(emp, ofis, nCols) {
     <div class="flex flex-wrap gap-3 justify-between items-start mb-4">
       <div>
         <h4 class="text-lg font-bold text-white">${esc(emp.nombre)} ${emp.activa ? `<span class="badge bg-emerald-500/15 text-emerald-300 ml-1">Activa</span>` : `<span class="badge bg-red-500/15 text-red-300 ml-1">Desactivada</span>`}</h4>
-        <p class="text-xs text-slate-400 mt-1">${ofis.length} oficina(s) · ${nCols} colaborador(es) activos · Entrada ${emp.hora_entrada.slice(0,5)} (tolerancia ${emp.tolerancia_min} min) · Alta ${fFecha(emp.created_at)}</p>
+        <p class="text-xs text-slate-400 mt-1">${ofis.length} oficina(s) · ${nCols} colaborador(es) activos · Tolerancia ${emp.tolerancia_min} min · Alta ${fFecha(emp.created_at)}</p>
       </div>
       <div class="flex flex-wrap gap-2">
         <button class="btn btn-sm btn-pri" onclick="entrarEmpresa('${emp.id}')"><i class="fa-solid fa-arrow-right-to-bracket"></i>Ver panel</button>
@@ -321,10 +336,8 @@ function abrirEditarEmpresa(id) {
     <h3 class="text-lg font-bold mb-4">Editar empresa</h3>
     <div class="space-y-3">
       <div><label class="lbl">Nombre</label><input id="eeNom" class="inp" value="${esc(e.nombre)}"></div>
-      <div class="grid grid-cols-2 gap-3">
-        <div><label class="lbl">Hora de entrada</label><input id="eeHora" type="time" class="inp" value="${e.hora_entrada.slice(0,5)}"></div>
-        <div><label class="lbl">Tolerancia (min)</label><input id="eeTol" type="number" min="0" max="240" class="inp" value="${e.tolerancia_min}"></div>
-      </div>
+      <div><label class="lbl">Tolerancia para tardanzas y salidas anticipadas (min)</label><input id="eeTol" type="number" min="0" max="240" class="inp" value="${e.tolerancia_min}">
+        <p class="text-xs text-slate-400 mt-1">Los horarios de entrada y salida se cargan en cada colaborador.</p></div>
       <div class="flex justify-between gap-2 pt-2">
         <button class="btn btn-dan" onclick="borrarEmpresa('${id}')"><i class="fa-solid fa-trash"></i>Eliminar</button>
         <div class="flex gap-2"><button class="btn btn-sec" onclick="cerrarModal()">Cancelar</button><button class="btn btn-pri" onclick="guardarEmpresa('${id}')">Guardar</button></div>
@@ -332,7 +345,7 @@ function abrirEditarEmpresa(id) {
     </div>`);
 }
 async function guardarEmpresa(id) {
-  const { error } = await sb.from("empresas").update({ nombre: $("eeNom").value.trim(), hora_entrada: $("eeHora").value, tolerancia_min: +$("eeTol").value }).eq("id", id);
+  const { error } = await sb.from("empresas").update({ nombre: $("eeNom").value.trim(), tolerancia_min: Math.min(240, Math.max(0, +$("eeTol").value || 0)) }).eq("id", id);
   if (error) return toast(errTxt(error), "error");
   cerrarModal(); toast("Empresa guardada"); renderSuperEmpresas();
 }
@@ -476,7 +489,7 @@ const TABS = [
   ["oficinas", "Oficinas / QR", "fa-qrcode"],
   ["colaboradores", "Colaboradores", "fa-users"],
   ["registros", "Registros", "fa-list-check"],
-  ["ajustes", "Horario", "fa-clock"],
+  ["ajustes", "Tolerancia", "fa-sliders"],
 ];
 function renderEmpresa() {
   const esSuper = S.perfil.rol === "superadmin";
@@ -511,26 +524,40 @@ async function tabPanel() {
   const cargar = async () => {
     if (S.tab !== "panel" || !$("empMain")) return clearInterval(S._refresco);
     try {
-      const [r, { data: hoy }] = await Promise.all([
+      const [r, { data: hoy }, { data: cols }] = await Promise.all([
         rpc("rl_resumen_hoy", { p_empresa: S.empresaId }),
-        sb.from("registros").select("id, entrada, salida, tardanza_min, colaboradores(nombre, cargo), oficina:oficinas!registros_oficina_id_fkey(nombre)")
+        sb.from("registros").select("id, entrada, salida, tardanza_min, salida_anticipada_min, dia_laborable, hora_entrada_prog, hora_salida_prog, colaborador_id, colaboradores(nombre, cargo), oficina:oficinas!registros_oficina_id_fkey(nombre)")
           .eq("empresa_id", S.empresaId).gte("entrada", hoyISO() + "T00:00:00-03:00").order("entrada", { ascending: false }),
+        sb.from("colaboradores").select("id, nombre, cargo, hora_entrada, hora_salida, dias").eq("empresa_id", S.empresaId).eq("estado", "Activa").order("hora_entrada"),
       ]);
+      const dow = dowHoy(), ahora = minutosAhora(), tol = S.empresa.tolerancia_min || 0;
+      const ficharon = new Set((hoy || []).map(x => x.colaborador_id));
+      const faltan = (cols || []).filter(c => (c.dias || []).map(Number).includes(dow) && !ficharon.has(c.id));
+      const minDe = t => { const [h, m] = String(t).split(":").map(Number); return h * 60 + m; };
       $("empMain").innerHTML = `
         <div class="flex flex-wrap justify-between items-end gap-2 mb-5">
           <div><h3 class="text-xl font-bold">Panel general</h3><p class="text-xs text-slate-400">Hoy, ${fFecha(new Date())} · se actualiza cada minuto</p></div>
           <button class="btn btn-sm btn-sec" onclick="tabPanel()"><i class="fa-solid fa-rotate"></i>Actualizar</button>
         </div>
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-          ${stat("Presentes ahora", `${r.presentes} <span class="text-sm text-slate-400 font-normal">de ${r.activos}</span>`, "fa-user-check", "emerald")}
+        <div class="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
+          ${stat("Presentes ahora", `${r.presentes} <span class="text-sm text-slate-400 font-normal">de ${r.programados} que trabajan hoy</span>`, "fa-user-check", "emerald")}
           ${stat("Horas trabajadas hoy", fMin(r.minutos), "fa-hourglass-half", "indigo")}
           ${stat("Tardanzas", r.tardanzas, "fa-triangle-exclamation", "amber")}
-          ${stat("Ausentes", r.ausentes, "fa-user-xmark", "red")}
+          ${stat("Salidas anticipadas", r.anticipadas, "fa-person-walking-arrow-right", "orange")}
+          ${stat("Sin fichar hoy", r.ausentes, "fa-user-xmark", "red")}
         </div>
+        ${faltan.length ? `<div class="card overflow-x-auto mb-6">
+          <div class="px-4 py-3 border-b border-slate-700 font-semibold text-sm">Trabajan hoy y todavía no ficharon</div>
+          <table class="tbl"><thead><tr><th>Colaborador</th><th>Horario</th><th>Situación</th></tr></thead><tbody>
+          ${faltan.map(c => { const atrasado = ahora > minDe(c.hora_entrada) + tol;
+            return `<tr><td><p class="font-medium">${esc(c.nombre)}</p><p class="text-xs text-slate-400">${esc(c.cargo)}</p></td><td>${fHorario(c)}</td>
+            <td>${atrasado ? `<span class="badge bg-red-500/15 text-red-300">Atrasado (entra ${hm(c.hora_entrada)})</span>` : `<span class="badge bg-slate-600/40 text-slate-300">Entra a las ${hm(c.hora_entrada)}</span>`}</td></tr>`; }).join("")}
+          </tbody></table></div>` : ""}
         <div class="card overflow-x-auto">
           <div class="px-4 py-3 border-b border-slate-700 font-semibold text-sm">Fichajes de hoy</div>
-          ${hoy?.length ? `<table class="tbl"><thead><tr><th>Colaborador</th><th>Oficina</th><th>Entrada</th><th>Salida</th><th>Tiempo</th><th>Estado</th></tr></thead><tbody>
+          ${hoy?.length ? `<table class="tbl"><thead><tr><th>Colaborador</th><th>Horario</th><th>Oficina</th><th>Entrada</th><th>Salida</th><th>Tiempo</th><th>Estado</th></tr></thead><tbody>
             ${hoy.map(x => `<tr><td><p class="font-medium">${esc(x.colaboradores?.nombre)}</p><p class="text-xs text-slate-400">${esc(x.colaboradores?.cargo)}</p></td>
+              <td class="whitespace-nowrap">${x.hora_entrada_prog ? fHorario({ hora_entrada: x.hora_entrada_prog, hora_salida: x.hora_salida_prog }) : "—"}</td>
               <td>${esc(x.oficina?.nombre || "—")}</td><td>${fHora(x.entrada)}</td><td>${fHora(x.salida)}</td>
               <td>${fMin((new Date(x.salida || Date.now()) - new Date(x.entrada)) / 60000)}</td><td>${estadoBadge(x)}</td></tr>`).join("")}
           </tbody></table>` : `<p class="p-4 text-sm text-slate-400">Nadie fichó todavía hoy.</p>`}
@@ -541,7 +568,9 @@ async function tabPanel() {
   clearInterval(S._refresco); S._refresco = setInterval(cargar, 60000);
 }
 function estadoBadge(x) {
-  const t = x.tardanza_min > 0 ? `<span class="badge bg-amber-500/15 text-amber-300">Tarde ${x.tardanza_min} min</span> ` : "";
+  let t = x.tardanza_min > 0 ? `<span class="badge bg-amber-500/15 text-amber-300">Tarde ${fMinCorto(x.tardanza_min)}</span> ` : "";
+  if (x.salida_anticipada_min > 0) t += `<span class="badge bg-orange-500/15 text-orange-300">Se fue ${fMinCorto(x.salida_anticipada_min)} antes</span> `;
+  if (x.dia_laborable === false) t += `<span class="badge bg-sky-500/15 text-sky-300">Día no laborable</span> `;
   if (!x.salida) {
     const viejo = Date.now() - new Date(x.entrada) > 16 * 3600e3;
     return t + (viejo ? `<span class="badge bg-red-500/15 text-red-300">Sin salida</span>` : `<span class="badge bg-emerald-500/15 text-emerald-300">Trabajando</span>`);
@@ -552,6 +581,7 @@ function estadoBadge(x) {
 // ---- Oficinas / QR ----
 async function tabOficinas() {
   const { data: ofis, error } = await sb.from("oficinas").select("*").eq("empresa_id", S.empresaId).order("nombre");
+  if (S.tab !== "oficinas" || !$("empMain")) return;
   if (error) return $("empMain").innerHTML = `<p class="text-red-400">${esc(error.message)}</p>`;
   S.cache.oficinas = ofis;
   const esSuper = S.perfil.rol === "superadmin";
@@ -576,6 +606,7 @@ async function tabOficinas() {
 // ---- Colaboradores ----
 async function tabColaboradores() {
   const { data, error } = await sb.from("colaboradores").select("*").eq("empresa_id", S.empresaId).order("nombre");
+  if (S.tab !== "colaboradores" || !$("empMain")) return;
   if (error) return $("empMain").innerHTML = `<p class="text-red-400">${esc(error.message)}</p>`;
   S.cache.colaboradores = data;
   $("empMain").innerHTML = `
@@ -583,7 +614,7 @@ async function tabColaboradores() {
       <h3 class="text-xl font-bold">Colaboradores <span class="text-sm text-slate-400 font-normal">(${data.filter(c => c.estado === "Activa").length} activos)</span></h3>
       <div class="flex gap-2"><input id="colBuscar" class="inp !w-56" placeholder="Buscar nombre, DNI o cargo" oninput="pintarColaboradores()"><button class="btn btn-pri" onclick="abrirColaborador()"><i class="fa-solid fa-plus"></i>Nuevo</button></div>
     </div>
-    <div class="card overflow-x-auto"><table class="tbl"><thead><tr><th>Nombre</th><th>DNI</th><th>Cargo</th><th>Estado</th><th></th></tr></thead><tbody id="colBody"></tbody></table></div>`;
+    <div class="card overflow-x-auto"><table class="tbl"><thead><tr><th>Nombre</th><th>DNI</th><th>Cargo</th><th>Horario</th><th>Días</th><th>Estado</th><th></th></tr></thead><tbody id="colBody"></tbody></table></div>`;
   pintarColaboradores();
 }
 function pintarColaboradores() {
@@ -591,29 +622,53 @@ function pintarColaboradores() {
   const lista = S.cache.colaboradores.filter(c => !q || [c.nombre, c.dni, c.cargo].some(v => String(v).toLowerCase().includes(q)));
   $("colBody").innerHTML = lista.length ? lista.map(c => `
     <tr class="${c.estado === "Activa" ? "" : "opacity-50"}"><td class="font-medium">${esc(c.nombre)}</td><td class="font-mono">${esc(c.dni)}</td><td>${esc(c.cargo)}</td>
+    <td class="whitespace-nowrap">${fHorario(c)}</td><td class="whitespace-nowrap">${fDias(c.dias)}</td>
     <td>${c.estado === "Activa" ? `<span class="badge bg-emerald-500/15 text-emerald-300">Activa</span>` : `<span class="badge bg-slate-600/40 text-slate-300">Inactiva</span>`}</td>
     <td class="text-right whitespace-nowrap"><button class="btn btn-sm btn-sec" onclick="abrirColaborador('${c.id}')"><i class="fa-solid fa-pen"></i></button>
     <button class="btn btn-sm btn-sec" title="${c.estado === "Activa" ? "Desactivar" : "Activar"}" onclick="toggleColaborador('${c.id}')"><i class="fa-solid ${c.estado === "Activa" ? "fa-user-slash" : "fa-user-check"}"></i></button>
     <button class="btn btn-sm btn-dan" onclick="borrarColaborador('${c.id}')"><i class="fa-solid fa-trash"></i></button></td></tr>`).join("")
-    : `<tr><td colspan="5" class="text-center text-slate-400 py-6">${q ? "Sin resultados." : "Todavía no cargaste colaboradores."}</td></tr>`;
+    : `<tr><td colspan="7" class="text-center text-slate-400 py-6">${q ? "Sin resultados." : "Todavía no cargaste colaboradores."}</td></tr>`;
 }
 function abrirColaborador(id) {
-  const c = id ? S.cache.colaboradores.find(x => x.id === id) : { nombre: "", dni: "", cargo: "", estado: "Activa" };
+  const c = id ? S.cache.colaboradores.find(x => x.id === id) : { nombre: "", dni: "", cargo: "", estado: "Activa", hora_entrada: "09:00", hora_salida: "18:00", dias: [1, 2, 3, 4, 5] };
+  const dias = (c.dias || []).map(Number);
   abrirModal(`
     <h3 class="text-lg font-bold mb-4">${id ? "Editar colaborador" : "Nuevo colaborador"}</h3>
     <div class="space-y-3">
       <div><label class="lbl">Nombre y apellido</label><input id="cNom" class="inp" value="${esc(c.nombre)}"></div>
       <div><label class="lbl">DNI (con el que ficha)</label><input id="cDni" class="inp font-mono" inputmode="numeric" value="${esc(c.dni)}"></div>
       <div><label class="lbl">Cargo</label><input id="cCar" class="inp" value="${esc(c.cargo)}"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="lbl">Hora de entrada</label><input id="cHE" type="time" class="inp" value="${hm(c.hora_entrada)}"></div>
+        <div><label class="lbl">Hora de salida</label><input id="cHS" type="time" class="inp" value="${hm(c.hora_salida)}"></div>
+      </div>
+      <p class="text-xs text-slate-400 -mt-1">Si la salida es menor que la entrada (ej. 22:00 a 06:00) se toma como turno nocturno.</p>
+      <div>
+        <label class="lbl">Días de trabajo</label>
+        <div class="flex flex-wrap gap-1.5" id="cDias">
+          ${DIAS.map(([n, l, nom]) => `<label title="${nom}" class="cursor-pointer"><input type="checkbox" value="${n}" class="peer sr-only" ${dias.includes(n) ? "checked" : ""}>
+            <span class="inline-flex w-10 h-10 items-center justify-center rounded-xl border border-slate-600 text-sm font-semibold text-slate-300 peer-checked:bg-indigo-600 peer-checked:border-indigo-500 peer-checked:text-white">${l}</span></label>`).join("")}
+        </div>
+        <div class="flex flex-wrap gap-2 mt-2">
+          <button type="button" class="btn btn-sm btn-sec" onclick="marcarDias([1,2,3,4,5])">Lunes a viernes</button>
+          <button type="button" class="btn btn-sm btn-sec" onclick="marcarDias([1,2,3,4,5,6])">Lunes a sábado</button>
+          <button type="button" class="btn btn-sm btn-sec" onclick="marcarDias([1,2,3,4,5,6,7])">Todos</button>
+        </div>
+      </div>
       <div><label class="lbl">Estado</label><select id="cEst" class="inp"><option ${c.estado === "Activa" ? "selected" : ""}>Activa</option><option ${c.estado === "Inactiva" ? "selected" : ""}>Inactiva</option></select></div>
       <p id="cErr" class="text-red-400 text-sm min-h-[1.25rem]"></p>
       <div class="flex justify-end gap-2"><button class="btn btn-sec" onclick="cerrarModal()">Cancelar</button><button class="btn btn-pri" onclick="guardarColaborador('${id || ""}')">Guardar</button></div>
     </div>`);
 }
+function marcarDias(lista) { document.querySelectorAll("#cDias input").forEach(i => i.checked = lista.includes(+i.value)); }
 async function guardarColaborador(id) {
-  const fila = { nombre: $("cNom").value.trim(), dni: $("cDni").value.replace(/\D/g, ""), cargo: $("cCar").value.trim(), estado: $("cEst").value };
+  const fila = { nombre: $("cNom").value.trim(), dni: $("cDni").value.replace(/\D/g, ""), cargo: $("cCar").value.trim(), estado: $("cEst").value,
+    hora_entrada: $("cHE").value, hora_salida: $("cHS").value, dias: [...document.querySelectorAll("#cDias input:checked")].map(i => +i.value) };
   if (!fila.nombre) return $("cErr").textContent = "Falta el nombre.";
   if (!/^\d{6,9}$/.test(fila.dni)) return $("cErr").textContent = "El DNI debe tener entre 6 y 9 números.";
+  if (!fila.hora_entrada || !fila.hora_salida) return $("cErr").textContent = "Completá la hora de entrada y la de salida.";
+  if (fila.hora_entrada === fila.hora_salida) return $("cErr").textContent = "La entrada y la salida no pueden ser a la misma hora.";
+  if (!fila.dias.length) return $("cErr").textContent = "Marcá al menos un día de trabajo.";
   const { error } = id ? await sb.from("colaboradores").update(fila).eq("id", id) : await sb.from("colaboradores").insert({ ...fila, empresa_id: S.empresaId });
   if (error) return $("cErr").textContent = errTxt(error);
   cerrarModal(); toast("Colaborador guardado"); tabColaboradores();
@@ -652,23 +707,25 @@ async function tabRegistros() {
 async function buscarRegistros() {
   const f = S.filtroReg = { desde: $("rDesde").value, hasta: $("rHasta").value, col: $("rCol").value };
   if (!f.desde || !f.hasta || f.desde > f.hasta) return toast("Revisá las fechas", "error");
-  let q = sb.from("registros").select("id, entrada, salida, tardanza_min, colaborador_id, colaboradores(nombre, dni), oficina:oficinas!registros_oficina_id_fkey(nombre), oficina_salida:oficinas!registros_oficina_salida_id_fkey(nombre)")
+  let q = sb.from("registros").select("id, entrada, salida, tardanza_min, salida_anticipada_min, dia_laborable, hora_entrada_prog, hora_salida_prog, colaborador_id, colaboradores(nombre, dni), oficina:oficinas!registros_oficina_id_fkey(nombre), oficina_salida:oficinas!registros_oficina_salida_id_fkey(nombre)")
     .eq("empresa_id", S.empresaId).gte("entrada", f.desde + "T00:00:00-03:00").lt("entrada", sumarDias(f.hasta, 1) + "T00:00:00-03:00")
     .order("entrada", { ascending: false }).limit(2000);
   if (f.col) q = q.eq("colaborador_id", f.col);
   const { data, error } = await q;
+  if (!$("regRes")) return; // se cambió de pestaña mientras cargaba
   if (error) return $("regRes").innerHTML = `<p class="text-red-400">${esc(error.message)}</p>`;
   S.cache.registros = data;
   const totMin = data.reduce((s, x) => s + (x.salida ? (new Date(x.salida) - new Date(x.entrada)) / 60000 : 0), 0);
   $("regRes").innerHTML = `
-    <p class="text-sm text-slate-400 mb-3">${data.length} fichaje(s) · ${fMin(totMin)} trabajadas (jornadas cerradas) · ${data.filter(x => x.tardanza_min > 0).length} tardanza(s)${data.length === 2000 ? " · <span class='text-amber-300'>se muestran los primeros 2000, acotá las fechas</span>" : ""}</p>
-    <div class="card overflow-x-auto"><table class="tbl"><thead><tr><th>Fecha</th><th>Colaborador</th><th>DNI</th><th>Oficina</th><th>Entrada</th><th>Salida</th><th>Tiempo</th><th>Estado</th><th></th></tr></thead><tbody>
+    <p class="text-sm text-slate-400 mb-3">${data.length} fichaje(s) · ${fMin(totMin)} trabajadas (jornadas cerradas) · ${data.filter(x => x.tardanza_min > 0).length} tardanza(s) · ${data.filter(x => x.salida_anticipada_min > 0).length} salida(s) anticipada(s)${data.length === 2000 ? " · <span class='text-amber-300'>se muestran los primeros 2000, acotá las fechas</span>" : ""}</p>
+    <div class="card overflow-x-auto"><table class="tbl"><thead><tr><th>Fecha</th><th>Colaborador</th><th>DNI</th><th>Horario</th><th>Oficina</th><th>Entrada</th><th>Salida</th><th>Tiempo</th><th>Estado</th><th></th></tr></thead><tbody>
       ${data.length ? data.map(x => `<tr><td>${fFecha(x.entrada)}</td><td class="font-medium">${esc(x.colaboradores?.nombre)}</td><td class="font-mono text-xs">${esc(x.colaboradores?.dni)}</td>
+        <td class="whitespace-nowrap">${x.hora_entrada_prog ? fHorario({ hora_entrada: x.hora_entrada_prog, hora_salida: x.hora_salida_prog }) : "—"}</td>
         <td>${esc(x.oficina?.nombre || "—")}${x.oficina_salida && x.oficina_salida.nombre !== x.oficina?.nombre ? `<p class="text-xs text-slate-400">Salida: ${esc(x.oficina_salida.nombre)}</p>` : ""}</td>
         <td>${fHora(x.entrada)}</td><td>${x.salida ? (fFecha(x.salida) !== fFecha(x.entrada) ? fFecha(x.salida) + " " : "") + fHora(x.salida) : "—"}</td>
         <td>${x.salida ? fMin((new Date(x.salida) - new Date(x.entrada)) / 60000) : "—"}</td><td>${estadoBadge(x)}</td>
         <td><button class="btn btn-sm btn-sec" title="Corregir" onclick="abrirCorreccion(${x.id})"><i class="fa-solid fa-pen"></i></button></td></tr>`).join("")
-      : `<tr><td colspan="9" class="text-center text-slate-400 py-6">Sin fichajes en ese período.</td></tr>`}
+      : `<tr><td colspan="10" class="text-center text-slate-400 py-6">Sin fichajes en ese período.</td></tr>`}
     </tbody></table></div>`;
 }
 const aLocalInput = ts => ts ? new Date(new Date(ts).getTime() - 3 * 3600e3).toISOString().slice(0, 16) : "";
@@ -680,7 +737,10 @@ function abrirCorreccion(id) {
     <div class="space-y-3">
       <div><label class="lbl">Entrada</label><input type="datetime-local" id="coEnt" class="inp" value="${aLocalInput(x.entrada)}"></div>
       <div><label class="lbl">Salida</label><input type="datetime-local" id="coSal" class="inp" value="${aLocalInput(x.salida)}"></div>
-      <div><label class="lbl">Tardanza (minutos)</label><input type="number" min="0" id="coTar" class="inp" value="${x.tardanza_min}"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="lbl">Tardanza (min)</label><input type="number" min="0" id="coTar" class="inp" value="${x.tardanza_min}"></div>
+        <div><label class="lbl">Salida anticipada (min)</label><input type="number" min="0" id="coAnt" class="inp" value="${x.salida_anticipada_min || 0}"></div>
+      </div>
       <p class="text-xs text-slate-400">Horario de Argentina (UTC-3). Dejá la salida vacía si la jornada sigue abierta.</p>
       <div class="flex justify-end gap-2"><button class="btn btn-sec" onclick="cerrarModal()">Cancelar</button><button class="btn btn-pri" onclick="guardarCorreccion(${id})">Guardar</button></div>
     </div>`);
@@ -689,16 +749,18 @@ async function guardarCorreccion(id) {
   const ent = $("coEnt").value, sal = $("coSal").value;
   if (!ent) return toast("Falta la entrada", "error");
   if (sal && sal < ent) return toast("La salida no puede ser anterior a la entrada", "error");
-  const { error } = await sb.from("registros").update({ entrada: ent + ":00-03:00", salida: sal ? sal + ":00-03:00" : null, tardanza_min: Math.max(0, +$("coTar").value || 0) }).eq("id", id);
+  const { error } = await sb.from("registros").update({ entrada: ent + ":00-03:00", salida: sal ? sal + ":00-03:00" : null, tardanza_min: Math.max(0, +$("coTar").value || 0), salida_anticipada_min: Math.max(0, +$("coAnt").value || 0) }).eq("id", id);
   if (error) return toast(errTxt(error), "error");
   cerrarModal(); toast("Fichaje corregido"); buscarRegistros();
 }
 function exportarRegistros() {
   const d = S.cache.registros || [];
   if (!d.length) return toast("No hay registros para exportar", "error");
-  const filas = [["Fecha", "Colaborador", "DNI", "Oficina", "Entrada", "Salida", "Minutos trabajados", "Tardanza (min)"]].concat(
-    d.slice().reverse().map(x => [fFecha(x.entrada), x.colaboradores?.nombre, x.colaboradores?.dni, x.oficina?.nombre || "", fHora(x.entrada), x.salida ? fHora(x.salida) : "",
-      x.salida ? Math.round((new Date(x.salida) - new Date(x.entrada)) / 60000) : "", x.tardanza_min]));
+  const filas = [["Fecha", "Colaborador", "DNI", "Horario", "Día laborable", "Oficina", "Entrada", "Salida", "Minutos trabajados", "Tardanza (min)", "Salida anticipada (min)"]].concat(
+    d.slice().reverse().map(x => [fFecha(x.entrada), x.colaboradores?.nombre, x.colaboradores?.dni,
+      x.hora_entrada_prog ? `${hm(x.hora_entrada_prog)}-${hm(x.hora_salida_prog)}` : "", x.dia_laborable === false ? "No" : "Sí",
+      x.oficina?.nombre || "", fHora(x.entrada), x.salida ? fHora(x.salida) : "",
+      x.salida ? Math.round((new Date(x.salida) - new Date(x.entrada)) / 60000) : "", x.tardanza_min, x.salida_anticipada_min || 0]));
   const csv = "﻿" + filas.map(r => r.map(v => `"${String(v ?? "").replace(/"/g, '""')}"`).join(";")).join("\r\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -706,25 +768,24 @@ function exportarRegistros() {
   a.click(); URL.revokeObjectURL(a.href);
 }
 
-// ---- Horario ----
+// ---- Tolerancia ----
 function tabAjustes() {
   const e = S.empresa;
   $("empMain").innerHTML = `
     <div class="card p-6 max-w-lg">
-      <h3 class="text-lg font-bold mb-1">Horario de entrada</h3>
-      <p class="text-sm text-slate-400 mb-4">Se usa para marcar tardanzas en la primera entrada de cada día.</p>
-      <div class="grid grid-cols-2 gap-3">
-        <div><label class="lbl">Hora de entrada</label><input type="time" id="ajHora" class="inp" value="${e.hora_entrada.slice(0,5)}"></div>
-        <div><label class="lbl">Tolerancia (min)</label><input type="number" id="ajTol" min="0" max="240" class="inp" value="${e.tolerancia_min}"></div>
-      </div>
-      <button class="btn btn-pri mt-4" onclick="guardarHorario()">Guardar</button>
+      <h3 class="text-lg font-bold mb-1">Tolerancia</h3>
+      <p class="text-sm text-slate-400 mb-4">Minutos de margen para todos los colaboradores. Llegar dentro de este margen no cuenta como tardanza, e irse dentro de este margen antes de la hora de salida no cuenta como salida anticipada.</p>
+      <div class="max-w-[12rem]"><label class="lbl">Tolerancia (minutos)</label><input type="number" id="ajTol" min="0" max="240" class="inp" value="${e.tolerancia_min}"></div>
+      <p class="text-xs text-slate-400 mt-3">Los horarios de entrada, salida y días de trabajo se cargan en cada colaborador, desde <b>Colaboradores</b>.</p>
+      <button class="btn btn-pri mt-4" onclick="guardarTolerancia()">Guardar</button>
     </div>`;
 }
-async function guardarHorario() {
-  const h = $("ajHora").value, t = +$("ajTol").value;
+async function guardarTolerancia() {
+  const t = +$("ajTol").value;
+  if (!Number.isInteger(t) || t < 0 || t > 240) return toast("La tolerancia tiene que ser entre 0 y 240 minutos", "error");
   try {
-    await rpc("rl_guardar_horario", { p_empresa: S.empresaId, p_hora: h, p_tolerancia: t });
-    S.empresa.hora_entrada = h + ":00"; S.empresa.tolerancia_min = t; toast("Horario guardado");
+    await rpc("rl_guardar_tolerancia", { p_empresa: S.empresaId, p_tolerancia: t });
+    S.empresa.tolerancia_min = t; toast("Tolerancia guardada");
   } catch (e) { toast(errTxt(e), "error"); }
 }
 
@@ -791,8 +852,11 @@ async function fichar(tipo) {
       <p class="text-sm text-slate-400 mt-3">${ent ? "Entrada registrada" : "Salida registrada"}</p>
       <h2 class="text-xl font-bold">${esc(r.nombre)}</h2>
       <p class="text-4xl font-bold tabular-nums my-2">${esc(r.hora)}</p>
-      ${ent && r.tardanza_min > 0 ? `<p class="badge bg-amber-500/15 text-amber-300">Llegada tarde: ${r.tardanza_min} min</p>` : ""}
+      ${ent && r.tardanza_min > 0 ? `<p class="badge bg-amber-500/15 text-amber-300">Llegada tarde: ${fMinCorto(r.tardanza_min)}</p>` : ""}
+      ${ent && r.dia_laborable === false ? `<p class="badge bg-sky-500/15 text-sky-300">Hoy no es tu día de trabajo</p>` : ""}
+      ${ent && r.dia_laborable !== false && r.hora_salida_prog ? `<p class="text-sm text-slate-300 mt-1">Tu horario de salida: ${esc(r.hora_salida_prog)}</p>` : ""}
       ${!ent ? `<p class="text-sm text-slate-300">Jornada: ${fMin(r.minutos)}</p>` : ""}
+      ${!ent && r.salida_anticipada_min > 0 ? `<p class="badge bg-orange-500/15 text-orange-300 mt-1">Salida anticipada: ${fMinCorto(r.salida_anticipada_min)}</p>` : ""}
       <button class="btn btn-sec mt-5 w-full" onclick="renderFichaje()">Listo</button>
     </div>`;
   setTimeout(() => { if (document.body.contains($("fichajeCuerpo")) && !$("dniInput")) renderFichaje(); }, 8000);
