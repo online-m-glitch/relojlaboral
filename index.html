@@ -69,6 +69,97 @@ function fDias(d) {
 const fHorario = c => `${hm(c.hora_entrada)}–${hm(c.hora_salida)}${c.hora_salida && c.hora_entrada && c.hora_salida <= c.hora_entrada ? " (noche)" : ""}`;
 const dowHoy = () => { const d = new Date(new Date().toLocaleString("en-US", { timeZone: ZONA })).getDay(); return d === 0 ? 7 : d; };
 const minutosAhora = () => { const [h, m] = new Date().toLocaleTimeString("en-GB", { timeZone: ZONA, hour: "2-digit", minute: "2-digit", hour12: false }).split(":").map(Number); return h * 60 + m; };
+// ---- Ubicación: editor reutilizable (oficinas y lugar remoto) ----
+function parseCoords(t) {
+  t = String(t || "");
+  let m = t.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/) || t.match(/(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})/);
+  if (!m) return null;
+  const lat = +m[1], lng = +m[2];
+  return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null;
+}
+function ubiEditorHTML(p, u) {
+  return `
+    <div class="space-y-2">
+      <div class="flex gap-2"><input id="${p}Buscar" class="inp" placeholder="Buscar dirección (calle, número, ciudad)" onkeydown="if(event.key==='Enter'){event.preventDefault();ubiBuscar('${p}')}">
+        <button type="button" class="btn btn-sec shrink-0" onclick="ubiBuscar('${p}')"><i class="fa-solid fa-magnifying-glass"></i></button></div>
+      <div id="${p}Res" class="space-y-1"></div>
+      <div class="flex flex-wrap gap-2">
+        <button type="button" class="btn btn-sm btn-sec" onclick="ubiActual('${p}')"><i class="fa-solid fa-location-crosshairs"></i>Usar mi ubicación actual</button>
+        <input id="${p}Pegar" class="inp !w-auto flex-grow text-xs" placeholder="…o pegá coordenadas / link de Google Maps" oninput="ubiPegar('${p}')">
+      </div>
+      <div class="grid grid-cols-3 gap-2">
+        <div><label class="lbl">Latitud</label><input id="${p}Lat" class="inp font-mono text-xs" value="${u.lat ?? ""}" oninput="ubiMapa('${p}')"></div>
+        <div><label class="lbl">Longitud</label><input id="${p}Lng" class="inp font-mono text-xs" value="${u.lng ?? ""}" oninput="ubiMapa('${p}')"></div>
+        <div><label class="lbl">Radio (m)</label><input id="${p}Radio" type="number" min="20" max="5000" class="inp" value="${u.radio ?? 150}" oninput="ubiMapa('${p}')"></div>
+      </div>
+      <p id="${p}Info" class="text-xs text-slate-400"></p>
+      <div id="${p}Mapa" class="rounded-xl overflow-hidden border border-slate-700 bg-slate-900 h-48 flex items-center justify-center text-xs text-slate-500">Sin ubicación cargada</div>
+    </div>`;
+}
+function ubiLeer(p) {
+  const lat = parseFloat(String($(p + "Lat").value).replace(",", ".")), lng = parseFloat(String($(p + "Lng").value).replace(",", "."));
+  return { lat: isFinite(lat) ? lat : null, lng: isFinite(lng) ? lng : null, radio: Math.round(+$(p + "Radio").value || 0) };
+}
+function ubiMapa(p) {
+  const u = ubiLeer(p), box = $(p + "Mapa");
+  if (!box) return;
+  if (u.lat == null || u.lng == null || Math.abs(u.lat) > 90 || Math.abs(u.lng) > 180) { box.innerHTML = "Sin ubicación cargada"; return; }
+  const d = Math.max(0.002, (u.radio || 150) / 111000 * 2.2);
+  const src = `https://www.openstreetmap.org/export/embed.html?bbox=${u.lng - d},${u.lat - d},${u.lng + d},${u.lat + d}&layer=mapnik&marker=${u.lat},${u.lng}`;
+  box.innerHTML = `<iframe title="Mapa" class="w-full h-full" loading="lazy" src="${src}"></iframe>`;
+}
+function ubiSet(p, lat, lng, info) {
+  $(p + "Lat").value = (+lat).toFixed(6); $(p + "Lng").value = (+lng).toFixed(6);
+  $(p + "Info").textContent = info || ""; ubiMapa(p);
+}
+function ubiPegar(p) { const c = parseCoords($(p + "Pegar").value); if (c) ubiSet(p, c.lat, c.lng, "Coordenadas cargadas."); }
+function ubiActual(p) {
+  if (!navigator.geolocation) return toast("Este dispositivo no permite obtener la ubicación", "error");
+  $(p + "Info").textContent = "Obteniendo ubicación…";
+  navigator.geolocation.getCurrentPosition(
+    pos => ubiSet(p, pos.coords.latitude, pos.coords.longitude, `Ubicación actual (precisión ±${Math.round(pos.coords.accuracy)} m).${pos.coords.accuracy > 100 ? " Es poco precisa: si podés, cargala desde el celular con GPS." : ""}`),
+    () => { $(p + "Info").textContent = "No se pudo obtener la ubicación. Revisá el permiso de ubicación del navegador."; },
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+}
+async function ubiBuscar(p) {
+  const q = $(p + "Buscar").value.trim();
+  if (q.length < 4) return;
+  $(p + "Res").innerHTML = `<p class="text-xs text-slate-400">Buscando…</p>`;
+  try {
+    const r = await fetch("https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=ar,uy&q=" + encodeURIComponent(q), { headers: { "Accept-Language": "es" } });
+    const lista = await r.json();
+    S.cache.ubiRes = lista;
+    $(p + "Res").innerHTML = lista.length ? lista.map((x, i) => `<button type="button" class="block w-full text-left text-xs px-3 py-2 rounded-lg bg-slate-900/60 hover:bg-slate-700" onclick="ubiElegir('${p}', ${i})">${esc(x.display_name)}</button>`).join("")
+      : `<p class="text-xs text-slate-400">No se encontró. Probá con calle, número y ciudad, o pegá las coordenadas de Google Maps.</p>`;
+  } catch { $(p + "Res").innerHTML = `<p class="text-xs text-red-400">No se pudo buscar ahora. Pegá las coordenadas de Google Maps.</p>`; }
+}
+function ubiElegir(p, i) { const x = S.cache.ubiRes[i]; $(p + "Res").innerHTML = ""; ubiSet(p, x.lat, x.lon, "Ubicación de la dirección elegida. Revisá en el mapa que el punto esté bien."); }
+const badgeGeo = o => o.geo_activa && o.lat != null
+  ? `<span class="badge bg-emerald-500/15 text-emerald-300">📍 Geocerca ${o.radio_m} m</span>`
+  : `<span class="badge bg-slate-600/40 text-slate-300">📍 Sin geocerca</span>`;
+function abrirUbicacion(ofiId) {
+  const o = (S.cache.oficinas || []).find(x => x.id === ofiId);
+  abrirModal(`
+    <h3 class="text-lg font-bold mb-1">Ubicación de ${esc(o.nombre)}</h3>
+    <p class="text-sm text-slate-400 mb-4">Con la geocerca activa, solo se puede fichar estando dentro del radio (o en el lugar remoto del colaborador, si lo tiene).</p>
+    ${ubiEditorHTML("uo", { lat: o.lat, lng: o.lng, radio: o.radio_m })}
+    <label class="flex items-center gap-2 mt-4 text-sm"><input type="checkbox" id="uoActiva" class="w-4 h-4" ${o.geo_activa ? "checked" : ""}> Exigir estar en el lugar para fichar (geocerca activa)</label>
+    <p id="uoErr" class="text-red-400 text-sm min-h-[1.25rem] mt-2"></p>
+    <div class="flex justify-end gap-2"><button class="btn btn-sec" onclick="cerrarModal()">Cancelar</button><button class="btn btn-pri" onclick="guardarUbicacion('${ofiId}')">Guardar</button></div>`);
+  if (!$("uoBuscar").value && o.direccion) $("uoBuscar").value = o.direccion;
+  ubiMapa("uo");
+}
+async function guardarUbicacion(ofiId) {
+  const u = ubiLeer("uo"), activa = $("uoActiva").checked;
+  if ((u.lat == null) !== (u.lng == null)) return $("uoErr").textContent = "Completá latitud y longitud.";
+  if (activa && u.lat == null) return $("uoErr").textContent = "Para activar la geocerca cargá la ubicación.";
+  if (u.radio < 20 || u.radio > 5000) return $("uoErr").textContent = "El radio tiene que ser entre 20 y 5000 m.";
+  try {
+    await rpc("rl_guardar_ubicacion", { p_oficina: ofiId, p_lat: u.lat, p_lng: u.lng, p_radio: u.radio, p_activa: activa });
+    cerrarModal(); toast("Ubicación guardada");
+    if (S.perfil.rol === "superadmin" && !S.empresaId) renderSuperEmpresas(); else tabOficinas();
+  } catch (e) { $("uoErr").textContent = errTxt(e); }
+}
 const hoyISO = () => new Date().toLocaleDateString("en-CA", { timeZone: ZONA });
 const sumarDias = (iso, d) => { const x = new Date(iso + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + d); return x.toISOString().slice(0,10); };
 const linkQR = tok => {
@@ -279,7 +370,9 @@ function cardEmpresa(emp, ofis, nCols) {
             <h6 class="font-bold text-white text-sm truncate">${esc(o.nombre)}</h6>
             <p class="text-xs text-slate-400 truncate">${esc(o.direccion) || "Sin dirección"}</p>
             <p class="text-[10px] font-mono text-amber-400 mt-1 break-all">${esc(o.qr_token)}</p>
+            <div class="mt-1">${badgeGeo(o)}</div>
             <div class="flex flex-wrap gap-1 mt-2">
+              <button class="btn btn-sm btn-sec" title="Ubicación / geocerca" onclick="abrirUbicacion('${o.id}')"><i class="fa-solid fa-location-dot"></i></button>
               <button class="btn btn-sm btn-sec" title="Imprimir" onclick="imprimirQR('${o.id}')"><i class="fa-solid fa-print"></i></button>
               <button class="btn btn-sm btn-sec" title="Editar" onclick="abrirOficina('${emp.id}','${o.id}')"><i class="fa-solid fa-pen"></i></button>
               <button class="btn btn-sm btn-sec" title="Regenerar QR" onclick="regenerarQR('${o.id}')"><i class="fa-solid fa-rotate"></i></button>
@@ -338,6 +431,7 @@ function abrirEditarEmpresa(id) {
       <div><label class="lbl">Nombre</label><input id="eeNom" class="inp" value="${esc(e.nombre)}"></div>
       <div><label class="lbl">Tolerancia para tardanzas y salidas anticipadas (min)</label><input id="eeTol" type="number" min="0" max="240" class="inp" value="${e.tolerancia_min}">
         <p class="text-xs text-slate-400 mt-1">Los horarios de entrada y salida se cargan en cada colaborador.</p></div>
+      <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="eeVinc" class="w-4 h-4" ${e.vincular_dispositivo !== false ? "checked" : ""}> Cada colaborador ficha solo desde su celular vinculado</label>
       <div class="flex justify-between gap-2 pt-2">
         <button class="btn btn-dan" onclick="borrarEmpresa('${id}')"><i class="fa-solid fa-trash"></i>Eliminar</button>
         <div class="flex gap-2"><button class="btn btn-sec" onclick="cerrarModal()">Cancelar</button><button class="btn btn-pri" onclick="guardarEmpresa('${id}')">Guardar</button></div>
@@ -345,7 +439,7 @@ function abrirEditarEmpresa(id) {
     </div>`);
 }
 async function guardarEmpresa(id) {
-  const { error } = await sb.from("empresas").update({ nombre: $("eeNom").value.trim(), tolerancia_min: Math.min(240, Math.max(0, +$("eeTol").value || 0)) }).eq("id", id);
+  const { error } = await sb.from("empresas").update({ nombre: $("eeNom").value.trim(), tolerancia_min: Math.min(240, Math.max(0, +$("eeTol").value || 0)), vincular_dispositivo: $("eeVinc").checked }).eq("id", id);
   if (error) return toast(errTxt(error), "error");
   cerrarModal(); toast("Empresa guardada"); renderSuperEmpresas();
 }
@@ -489,7 +583,7 @@ const TABS = [
   ["oficinas", "Oficinas / QR", "fa-qrcode"],
   ["colaboradores", "Colaboradores", "fa-users"],
   ["registros", "Registros", "fa-list-check"],
-  ["ajustes", "Tolerancia", "fa-sliders"],
+  ["ajustes", "Configuración", "fa-gear"],
 ];
 function renderEmpresa() {
   const esSuper = S.perfil.rol === "superadmin";
@@ -526,7 +620,7 @@ async function tabPanel() {
     try {
       const [r, { data: hoy }, { data: cols }] = await Promise.all([
         rpc("rl_resumen_hoy", { p_empresa: S.empresaId }),
-        sb.from("registros").select("id, entrada, salida, tardanza_min, salida_anticipada_min, dia_laborable, hora_entrada_prog, hora_salida_prog, colaborador_id, colaboradores(nombre, cargo), oficina:oficinas!registros_oficina_id_fkey(nombre)")
+        sb.from("registros").select("id, entrada, salida, tardanza_min, salida_anticipada_min, dia_laborable, hora_entrada_prog, hora_salida_prog, entrada_lugar, salida_lugar, colaborador_id, colaboradores(nombre, cargo), oficina:oficinas!registros_oficina_id_fkey(nombre)")
           .eq("empresa_id", S.empresaId).gte("entrada", hoyISO() + "T00:00:00-03:00").order("entrada", { ascending: false }),
         sb.from("colaboradores").select("id, nombre, cargo, hora_entrada, hora_salida, dias").eq("empresa_id", S.empresaId).eq("estado", "Activa").order("hora_entrada"),
       ]);
@@ -571,6 +665,7 @@ function estadoBadge(x) {
   let t = x.tardanza_min > 0 ? `<span class="badge bg-amber-500/15 text-amber-300">Tarde ${fMinCorto(x.tardanza_min)}</span> ` : "";
   if (x.salida_anticipada_min > 0) t += `<span class="badge bg-orange-500/15 text-orange-300">Se fue ${fMinCorto(x.salida_anticipada_min)} antes</span> `;
   if (x.dia_laborable === false) t += `<span class="badge bg-sky-500/15 text-sky-300">Día no laborable</span> `;
+  if (x.entrada_lugar === "remoto" || x.salida_lugar === "remoto") t += `<span class="badge bg-violet-500/15 text-violet-300">🏠 Remoto</span> `;
   if (!x.salida) {
     const viejo = Date.now() - new Date(x.entrada) > 16 * 3600e3;
     return t + (viejo ? `<span class="badge bg-red-500/15 text-red-300">Sin salida</span>` : `<span class="badge bg-emerald-500/15 text-emerald-300">Trabajando</span>`);
@@ -594,7 +689,9 @@ async function tabOficinas() {
           <div class="qrbox inline-block" data-qr="${esc(linkQR(o.qr_token))}" data-size="170"></div>
           <h4 class="font-bold mt-3">${esc(o.nombre)} ${o.activa ? "" : `<span class="badge bg-red-500/15 text-red-300">Desactivado</span>`}</h4>
           <p class="text-xs text-slate-400">${esc(o.direccion) || "Sin dirección"}</p>
-          <div class="flex justify-center gap-2 mt-3">
+          <div class="mt-2">${badgeGeo(o)}</div>
+          <div class="flex flex-wrap justify-center gap-2 mt-3">
+            <button class="btn btn-sm btn-sec" onclick="abrirUbicacion('${o.id}')"><i class="fa-solid fa-location-dot"></i>Ubicación</button>
             <button class="btn btn-sm btn-sec" onclick="imprimirQR('${o.id}')"><i class="fa-solid fa-print"></i>Imprimir</button>
             <button class="btn btn-sm btn-sec" onclick="navigator.clipboard.writeText('${esc(linkQR(o.qr_token))}').then(()=>toast('Link copiado'))"><i class="fa-solid fa-link"></i>Copiar link</button>
           </div>
@@ -605,8 +702,12 @@ async function tabOficinas() {
 
 // ---- Colaboradores ----
 async function tabColaboradores() {
-  const { data, error } = await sb.from("colaboradores").select("*").eq("empresa_id", S.empresaId).order("nombre");
+  const [{ data, error }, { data: ofis }] = await Promise.all([
+    sb.from("colaboradores").select("*").eq("empresa_id", S.empresaId).order("nombre"),
+    sb.from("oficinas").select("id, nombre, qr_token, activa").eq("empresa_id", S.empresaId).order("nombre"),
+  ]);
   if (S.tab !== "colaboradores" || !$("empMain")) return;
+  S.cache.oficinasEmp = ofis || [];
   if (error) return $("empMain").innerHTML = `<p class="text-red-400">${esc(error.message)}</p>`;
   S.cache.colaboradores = data;
   $("empMain").innerHTML = `
@@ -614,7 +715,7 @@ async function tabColaboradores() {
       <h3 class="text-xl font-bold">Colaboradores <span class="text-sm text-slate-400 font-normal">(${data.filter(c => c.estado === "Activa").length} activos)</span></h3>
       <div class="flex gap-2"><input id="colBuscar" class="inp !w-56" placeholder="Buscar nombre, DNI o cargo" oninput="pintarColaboradores()"><button class="btn btn-pri" onclick="abrirColaborador()"><i class="fa-solid fa-plus"></i>Nuevo</button></div>
     </div>
-    <div class="card overflow-x-auto"><table class="tbl"><thead><tr><th>Nombre</th><th>DNI</th><th>Cargo</th><th>Horario</th><th>Días</th><th>Estado</th><th></th></tr></thead><tbody id="colBody"></tbody></table></div>`;
+    <div class="card overflow-x-auto"><table class="tbl"><thead><tr><th>Nombre</th><th>DNI</th><th>Cargo</th><th>Horario</th><th>Días</th><th>Celular</th><th>Remoto</th><th>Estado</th><th></th></tr></thead><tbody id="colBody"></tbody></table></div>`;
   pintarColaboradores();
 }
 function pintarColaboradores() {
@@ -623,15 +724,21 @@ function pintarColaboradores() {
   $("colBody").innerHTML = lista.length ? lista.map(c => `
     <tr class="${c.estado === "Activa" ? "" : "opacity-50"}"><td class="font-medium">${esc(c.nombre)}</td><td class="font-mono">${esc(c.dni)}</td><td>${esc(c.cargo)}</td>
     <td class="whitespace-nowrap">${fHorario(c)}</td><td class="whitespace-nowrap">${fDias(c.dias)}</td>
+    <td class="whitespace-nowrap">${c.dispositivo_hash ? `<span class="badge bg-emerald-500/15 text-emerald-300" title="Vinculado el ${fFecha(c.dispositivo_at)}">📱 Vinculado</span>` : `<span class="text-xs text-slate-500">Sin vincular</span>`}</td>
+    <td class="whitespace-nowrap">${c.remoto_activo ? `<span class="badge bg-violet-500/15 text-violet-300">🏠 ${fDias(c.remoto_dias)}</span>` : `<span class="text-xs text-slate-500">—</span>`}</td>
     <td>${c.estado === "Activa" ? `<span class="badge bg-emerald-500/15 text-emerald-300">Activa</span>` : `<span class="badge bg-slate-600/40 text-slate-300">Inactiva</span>`}</td>
     <td class="text-right whitespace-nowrap"><button class="btn btn-sm btn-sec" onclick="abrirColaborador('${c.id}')"><i class="fa-solid fa-pen"></i></button>
     <button class="btn btn-sm btn-sec" title="${c.estado === "Activa" ? "Desactivar" : "Activar"}" onclick="toggleColaborador('${c.id}')"><i class="fa-solid ${c.estado === "Activa" ? "fa-user-slash" : "fa-user-check"}"></i></button>
     <button class="btn btn-sm btn-dan" onclick="borrarColaborador('${c.id}')"><i class="fa-solid fa-trash"></i></button></td></tr>`).join("")
-    : `<tr><td colspan="7" class="text-center text-slate-400 py-6">${q ? "Sin resultados." : "Todavía no cargaste colaboradores."}</td></tr>`;
+    : `<tr><td colspan="9" class="text-center text-slate-400 py-6">${q ? "Sin resultados." : "Todavía no cargaste colaboradores."}</td></tr>`;
 }
 function abrirColaborador(id) {
-  const c = id ? S.cache.colaboradores.find(x => x.id === id) : { nombre: "", dni: "", cargo: "", estado: "Activa", hora_entrada: "09:00", hora_salida: "18:00", dias: [1, 2, 3, 4, 5] };
-  const dias = (c.dias || []).map(Number);
+  const c = id ? S.cache.colaboradores.find(x => x.id === id) : { nombre: "", dni: "", cargo: "", estado: "Activa", hora_entrada: "09:00", hora_salida: "18:00", dias: [1, 2, 3, 4, 5], remoto_activo: false, remoto_dias: [1, 2, 3, 4, 5, 6, 7], remoto_radio_m: 150, remoto_direccion: "" };
+  const dias = (c.dias || []).map(Number), diasR = (c.remoto_dias || [1, 2, 3, 4, 5, 6, 7]).map(Number);
+  const ofi = (S.cache.oficinasEmp || []).find(o => o.activa);
+  const linkPersonal = ofi ? linkQR(ofi.qr_token) : "";
+  const chipsDias = (cont, sel) => DIAS.map(([n, l, nom]) => `<label title="${nom}" class="cursor-pointer"><input type="checkbox" value="${n}" class="peer sr-only" ${sel.includes(n) ? "checked" : ""}>
+            <span class="inline-flex w-10 h-10 items-center justify-center rounded-xl border border-slate-600 text-sm font-semibold text-slate-300 peer-checked:bg-indigo-600 peer-checked:border-indigo-500 peer-checked:text-white">${l}</span></label>`).join("");
   abrirModal(`
     <h3 class="text-lg font-bold mb-4">${id ? "Editar colaborador" : "Nuevo colaborador"}</h3>
     <div class="space-y-3">
@@ -645,10 +752,7 @@ function abrirColaborador(id) {
       <p class="text-xs text-slate-400 -mt-1">Si la salida es menor que la entrada (ej. 22:00 a 06:00) se toma como turno nocturno.</p>
       <div>
         <label class="lbl">Días de trabajo</label>
-        <div class="flex flex-wrap gap-1.5" id="cDias">
-          ${DIAS.map(([n, l, nom]) => `<label title="${nom}" class="cursor-pointer"><input type="checkbox" value="${n}" class="peer sr-only" ${dias.includes(n) ? "checked" : ""}>
-            <span class="inline-flex w-10 h-10 items-center justify-center rounded-xl border border-slate-600 text-sm font-semibold text-slate-300 peer-checked:bg-indigo-600 peer-checked:border-indigo-500 peer-checked:text-white">${l}</span></label>`).join("")}
-        </div>
+        <div class="flex flex-wrap gap-1.5" id="cDias">${chipsDias("cDias", dias)}</div>
         <div class="flex flex-wrap gap-2 mt-2">
           <button type="button" class="btn btn-sm btn-sec" onclick="marcarDias([1,2,3,4,5])">Lunes a viernes</button>
           <button type="button" class="btn btn-sm btn-sec" onclick="marcarDias([1,2,3,4,5,6])">Lunes a sábado</button>
@@ -656,11 +760,44 @@ function abrirColaborador(id) {
         </div>
       </div>
       <div><label class="lbl">Estado</label><select id="cEst" class="inp"><option ${c.estado === "Activa" ? "selected" : ""}>Activa</option><option ${c.estado === "Inactiva" ? "selected" : ""}>Inactiva</option></select></div>
+      ${id ? `<div class="flex flex-wrap items-center justify-between gap-2 bg-slate-900/60 rounded-xl px-3 py-2 text-sm">
+        ${c.dispositivo_hash ? `<span>📱 Celular vinculado el ${fFecha(c.dispositivo_at)}</span><button type="button" class="btn btn-sm btn-sec" onclick="desvincularCelular('${id}')">Desvincular</button>`
+          : `<span class="text-slate-400">📱 Sin celular vinculado: se vincula solo en su primer fichaje.</span>`}</div>` : ""}
+      <div class="border-t border-slate-700 pt-3">
+        <label class="flex items-center gap-2 text-sm font-semibold cursor-pointer"><input type="checkbox" id="cRem" class="w-4 h-4" ${c.remoto_activo ? "checked" : ""} onchange="$('cRemBox').classList.toggle('hidden', !this.checked); if (this.checked) ubiMapa('cr')"> 🏠 Puede fichar desde un lugar remoto (home office)</label>
+        <div id="cRemBox" class="${c.remoto_activo ? "" : "hidden"} space-y-3 mt-3">
+          <div><label class="lbl">Dirección del lugar remoto (referencia)</label><input id="cRemDir" class="inp" value="${esc(c.remoto_direccion || "")}" oninput="$('crBuscar').value=this.value"></div>
+          ${ubiEditorHTML("cr", { lat: c.remoto_lat, lng: c.remoto_lng, radio: c.remoto_radio_m || 150 })}
+          <div>
+            <label class="lbl">Días en que puede fichar desde ahí</label>
+            <div class="flex flex-wrap gap-1.5" id="cRemDias">${chipsDias("cRemDias", diasR)}</div>
+            <div class="flex flex-wrap gap-2 mt-2">
+              <button type="button" class="btn btn-sm btn-sec" onclick="marcarDias([1,2,3,4,5,6,7],'cRemDias')">Todos</button>
+              <button type="button" class="btn btn-sm btn-sec" onclick="marcarDias([1,2,3,4,5],'cRemDias')">Lunes a viernes</button>
+            </div>
+          </div>
+          ${linkPersonal ? `<div class="bg-slate-900/60 rounded-xl p-3 text-sm">
+            <p class="font-semibold mb-1">Link para fichar desde el lugar remoto</p>
+            <p class="text-xs text-slate-400 mb-2">Mandáselo y que lo guarde en el celular (sirve también en la oficina). Pasa por los mismos controles: DNI, celular vinculado y ubicación.</p>
+            <div class="flex flex-wrap gap-2">
+              <button type="button" class="btn btn-sm btn-sec" onclick="navigator.clipboard.writeText('${esc(linkPersonal)}').then(()=>toast('Link copiado'))"><i class="fa-solid fa-link"></i>Copiar link</button>
+              <a class="btn btn-sm btn-sec" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent("Link para fichar tu entrada y salida: " + linkPersonal)}"><i class="fa-brands fa-whatsapp"></i>WhatsApp</a>
+            </div></div>` : `<p class="text-xs text-amber-300">Para tener el link de fichaje remoto la empresa necesita al menos una oficina activa.</p>`}
+        </div>
+      </div>
       <p id="cErr" class="text-red-400 text-sm min-h-[1.25rem]"></p>
       <div class="flex justify-end gap-2"><button class="btn btn-sec" onclick="cerrarModal()">Cancelar</button><button class="btn btn-pri" onclick="guardarColaborador('${id || ""}')">Guardar</button></div>
     </div>`);
+  if (!$("crBuscar").value && c.remoto_direccion) $("crBuscar").value = c.remoto_direccion;
+  if (c.remoto_activo) ubiMapa("cr");
 }
-function marcarDias(lista) { document.querySelectorAll("#cDias input").forEach(i => i.checked = lista.includes(+i.value)); }
+async function desvincularCelular(id) {
+  if (!confirm("¿Desvincular el celular? El próximo fichaje que haga desde cualquier celular lo va a vincular de nuevo.")) return;
+  const { error } = await sb.from("colaboradores").update({ dispositivo_hash: null, dispositivo_at: null }).eq("id", id);
+  if (error) return toast(errTxt(error), "error");
+  cerrarModal(); toast("Celular desvinculado"); tabColaboradores();
+}
+function marcarDias(lista, cont = "cDias") { document.querySelectorAll(`#${cont} input`).forEach(i => i.checked = lista.includes(+i.value)); }
 async function guardarColaborador(id) {
   const fila = { nombre: $("cNom").value.trim(), dni: $("cDni").value.replace(/\D/g, ""), cargo: $("cCar").value.trim(), estado: $("cEst").value,
     hora_entrada: $("cHE").value, hora_salida: $("cHS").value, dias: [...document.querySelectorAll("#cDias input:checked")].map(i => +i.value) };
@@ -669,6 +806,14 @@ async function guardarColaborador(id) {
   if (!fila.hora_entrada || !fila.hora_salida) return $("cErr").textContent = "Completá la hora de entrada y la de salida.";
   if (fila.hora_entrada === fila.hora_salida) return $("cErr").textContent = "La entrada y la salida no pueden ser a la misma hora.";
   if (!fila.dias.length) return $("cErr").textContent = "Marcá al menos un día de trabajo.";
+  const ur = ubiLeer("cr");
+  Object.assign(fila, { remoto_activo: $("cRem").checked, remoto_direccion: $("cRemDir").value.trim(), remoto_lat: ur.lat, remoto_lng: ur.lng,
+    remoto_radio_m: ur.radio || 150, remoto_dias: [...document.querySelectorAll("#cRemDias input:checked")].map(i => +i.value) });
+  if (fila.remoto_activo) {
+    if (fila.remoto_lat == null || fila.remoto_lng == null) return $("cErr").textContent = "Cargá la ubicación del lugar remoto (buscá la dirección o pegá las coordenadas).";
+    if (!fila.remoto_dias.length) return $("cErr").textContent = "Marcá al menos un día para el trabajo remoto.";
+    if (fila.remoto_radio_m < 20 || fila.remoto_radio_m > 5000) return $("cErr").textContent = "El radio del lugar remoto tiene que ser entre 20 y 5000 m.";
+  }
   const { error } = id ? await sb.from("colaboradores").update(fila).eq("id", id) : await sb.from("colaboradores").insert({ ...fila, empresa_id: S.empresaId });
   if (error) return $("cErr").textContent = errTxt(error);
   cerrarModal(); toast("Colaborador guardado"); tabColaboradores();
@@ -707,11 +852,14 @@ async function tabRegistros() {
 async function buscarRegistros() {
   const f = S.filtroReg = { desde: $("rDesde").value, hasta: $("rHasta").value, col: $("rCol").value };
   if (!f.desde || !f.hasta || f.desde > f.hasta) return toast("Revisá las fechas", "error");
-  let q = sb.from("registros").select("id, entrada, salida, tardanza_min, salida_anticipada_min, dia_laborable, hora_entrada_prog, hora_salida_prog, colaborador_id, colaboradores(nombre, dni), oficina:oficinas!registros_oficina_id_fkey(nombre), oficina_salida:oficinas!registros_oficina_salida_id_fkey(nombre)")
+  let q = sb.from("registros").select("id, entrada, salida, tardanza_min, salida_anticipada_min, dia_laborable, hora_entrada_prog, hora_salida_prog, entrada_lugar, salida_lugar, entrada_distancia_m, salida_distancia_m, colaborador_id, colaboradores(nombre, dni), oficina:oficinas!registros_oficina_id_fkey(nombre), oficina_salida:oficinas!registros_oficina_salida_id_fkey(nombre)")
     .eq("empresa_id", S.empresaId).gte("entrada", f.desde + "T00:00:00-03:00").lt("entrada", sumarDias(f.hasta, 1) + "T00:00:00-03:00")
     .order("entrada", { ascending: false }).limit(2000);
-  if (f.col) q = q.eq("colaborador_id", f.col);
-  const { data, error } = await q;
+  let qr = sb.from("fichaje_rechazos").select("id, creado, tipo, motivo, distancia_m, colaboradores(nombre), oficinas(nombre)")
+    .eq("empresa_id", S.empresaId).gte("creado", f.desde + "T00:00:00-03:00").lt("creado", sumarDias(f.hasta, 1) + "T00:00:00-03:00")
+    .order("creado", { ascending: false }).limit(200);
+  if (f.col) { q = q.eq("colaborador_id", f.col); qr = qr.eq("colaborador_id", f.col); }
+  const [{ data, error }, { data: rech }] = await Promise.all([q, qr]);
   if (!$("regRes")) return; // se cambió de pestaña mientras cargaba
   if (error) return $("regRes").innerHTML = `<p class="text-red-400">${esc(error.message)}</p>`;
   S.cache.registros = data;
@@ -722,11 +870,22 @@ async function buscarRegistros() {
       ${data.length ? data.map(x => `<tr><td>${fFecha(x.entrada)}</td><td class="font-medium">${esc(x.colaboradores?.nombre)}</td><td class="font-mono text-xs">${esc(x.colaboradores?.dni)}</td>
         <td class="whitespace-nowrap">${x.hora_entrada_prog ? fHorario({ hora_entrada: x.hora_entrada_prog, hora_salida: x.hora_salida_prog }) : "—"}</td>
         <td>${esc(x.oficina?.nombre || "—")}${x.oficina_salida && x.oficina_salida.nombre !== x.oficina?.nombre ? `<p class="text-xs text-slate-400">Salida: ${esc(x.oficina_salida.nombre)}</p>` : ""}</td>
-        <td>${fHora(x.entrada)}</td><td>${x.salida ? (fFecha(x.salida) !== fFecha(x.entrada) ? fFecha(x.salida) + " " : "") + fHora(x.salida) : "—"}</td>
+        <td class="whitespace-nowrap">${fHora(x.entrada)}${iconoLugar(x.entrada_lugar, x.entrada_distancia_m)}</td><td class="whitespace-nowrap">${x.salida ? (fFecha(x.salida) !== fFecha(x.entrada) ? fFecha(x.salida) + " " : "") + fHora(x.salida) + iconoLugar(x.salida_lugar, x.salida_distancia_m) : "—"}</td>
         <td>${x.salida ? fMin((new Date(x.salida) - new Date(x.entrada)) / 60000) : "—"}</td><td>${estadoBadge(x)}</td>
         <td><button class="btn btn-sm btn-sec" title="Corregir" onclick="abrirCorreccion(${x.id})"><i class="fa-solid fa-pen"></i></button></td></tr>`).join("")
       : `<tr><td colspan="10" class="text-center text-slate-400 py-6">Sin fichajes en ese período.</td></tr>`}
-    </tbody></table></div>`;
+    </tbody></table></div>
+    ${rech?.length ? `<div class="card overflow-x-auto mt-6">
+      <div class="px-4 py-3 border-b border-slate-700 font-semibold text-sm"><i class="fa-solid fa-shield-halved text-red-400 mr-1"></i>Intentos rechazados (${rech.length})</div>
+      <table class="tbl"><thead><tr><th>Fecha</th><th>Hora</th><th>Colaborador</th><th>Oficina</th><th>Tipo</th><th>Motivo</th></tr></thead><tbody>
+      ${rech.map(x => `<tr><td>${fFecha(x.creado)}</td><td>${fHora(x.creado)}</td><td class="font-medium">${esc(x.colaboradores?.nombre || "—")}</td><td>${esc(x.oficinas?.nombre || "—")}</td>
+        <td>${x.tipo === "entrada" ? "Entrada" : "Salida"}</td><td class="text-xs text-slate-300">${esc(x.motivo)}</td></tr>`).join("")}
+      </tbody></table></div>` : ""}`;
+}
+function iconoLugar(lugar, dist) {
+  if (!lugar) return "";
+  const t = (lugar === "remoto" ? "Desde el lugar remoto" : "En la oficina") + (dist != null ? ` · a ${dist} m` : "");
+  return ` <span title="${t}" class="text-xs">${lugar === "remoto" ? "🏠" : "🏢"}</span>`;
 }
 const aLocalInput = ts => ts ? new Date(new Date(ts).getTime() - 3 * 3600e3).toISOString().slice(0, 16) : "";
 function abrirCorreccion(id) {
@@ -756,10 +915,11 @@ async function guardarCorreccion(id) {
 function exportarRegistros() {
   const d = S.cache.registros || [];
   if (!d.length) return toast("No hay registros para exportar", "error");
-  const filas = [["Fecha", "Colaborador", "DNI", "Horario", "Día laborable", "Oficina", "Entrada", "Salida", "Minutos trabajados", "Tardanza (min)", "Salida anticipada (min)"]].concat(
+  const lug = l => l === "remoto" ? "Remoto" : l === "oficina" ? "Oficina" : "";
+  const filas = [["Fecha", "Colaborador", "DNI", "Horario", "Día laborable", "Oficina", "Entrada", "Lugar entrada", "Salida", "Lugar salida", "Minutos trabajados", "Tardanza (min)", "Salida anticipada (min)"]].concat(
     d.slice().reverse().map(x => [fFecha(x.entrada), x.colaboradores?.nombre, x.colaboradores?.dni,
       x.hora_entrada_prog ? `${hm(x.hora_entrada_prog)}-${hm(x.hora_salida_prog)}` : "", x.dia_laborable === false ? "No" : "Sí",
-      x.oficina?.nombre || "", fHora(x.entrada), x.salida ? fHora(x.salida) : "",
+      x.oficina?.nombre || "", fHora(x.entrada), lug(x.entrada_lugar), x.salida ? fHora(x.salida) : "", lug(x.salida_lugar),
       x.salida ? Math.round((new Date(x.salida) - new Date(x.entrada)) / 60000) : "", x.tardanza_min, x.salida_anticipada_min || 0]));
   const csv = "﻿" + filas.map(r => r.map(v => `"${String(v ?? "").replace(/"/g, '""')}"`).join(";")).join("\r\n");
   const a = document.createElement("a");
@@ -773,19 +933,24 @@ function tabAjustes() {
   const e = S.empresa;
   $("empMain").innerHTML = `
     <div class="card p-6 max-w-lg">
-      <h3 class="text-lg font-bold mb-1">Tolerancia</h3>
+      <h3 class="text-lg font-bold mb-1">Configuración</h3>
+      <p class="font-semibold text-sm mt-4 mb-1">Tolerancia</p>
       <p class="text-sm text-slate-400 mb-4">Minutos de margen para todos los colaboradores. Llegar dentro de este margen no cuenta como tardanza, e irse dentro de este margen antes de la hora de salida no cuenta como salida anticipada.</p>
       <div class="max-w-[12rem]"><label class="lbl">Tolerancia (minutos)</label><input type="number" id="ajTol" min="0" max="240" class="inp" value="${e.tolerancia_min}"></div>
       <p class="text-xs text-slate-400 mt-3">Los horarios de entrada, salida y días de trabajo se cargan en cada colaborador, desde <b>Colaboradores</b>.</p>
-      <button class="btn btn-pri mt-4" onclick="guardarTolerancia()">Guardar</button>
+      <p class="font-semibold text-sm mt-6 mb-1">Celular vinculado</p>
+      <label class="flex items-start gap-2 text-sm cursor-pointer"><input type="checkbox" id="ajVinc" class="w-4 h-4 mt-0.5" ${e.vincular_dispositivo !== false ? "checked" : ""}>
+        <span>Cada colaborador ficha solo desde su propio celular. El primer fichaje vincula el celular al DNI; si cambia de teléfono, lo desvinculás desde <b>Colaboradores</b>. Apagalo solo si usan un celular o tablet compartido para fichar.</span></label>
+      <button class="btn btn-pri mt-5" onclick="guardarTolerancia()">Guardar</button>
     </div>`;
 }
 async function guardarTolerancia() {
   const t = +$("ajTol").value;
   if (!Number.isInteger(t) || t < 0 || t > 240) return toast("La tolerancia tiene que ser entre 0 y 240 minutos", "error");
   try {
-    await rpc("rl_guardar_tolerancia", { p_empresa: S.empresaId, p_tolerancia: t });
-    S.empresa.tolerancia_min = t; toast("Tolerancia guardada");
+    const v = $("ajVinc").checked;
+    await rpc("rl_guardar_config", { p_empresa: S.empresaId, p_tolerancia: t, p_vincular: v });
+    S.empresa.tolerancia_min = t; S.empresa.vincular_dispositivo = v; toast("Configuración guardada");
   } catch (e) { toast(errTxt(e), "error"); }
 }
 
@@ -794,6 +959,7 @@ async function renderFichaje() {
   $("app").innerHTML = cargando("Verificando código…");
   let info = null;
   try { info = await rpc("rl_fichaje_info", { p_token: qrParam }); } catch {}
+  S.infoFichaje = info;
   if (!info) {
     $("app").innerHTML = `<div class="flex-grow flex items-center justify-center p-6 text-center"><div class="card p-8 max-w-sm">
       <div class="text-4xl mb-3">⚠️</div><h2 class="text-lg font-bold">Código QR no válido</h2>
@@ -814,13 +980,15 @@ async function renderFichaje() {
         <label class="lbl" for="dniInput">Tu DNI</label>
         <input id="dniInput" class="inp text-center text-2xl font-mono tracking-widest" inputmode="numeric" autocomplete="off" maxlength="10" placeholder="12345678"
           oninput="this.value=this.value.replace(/\\D/g,'')" onkeydown="if(event.key==='Enter')fichar('entrada')">
+        <p id="fichEstado" class="text-indigo-300 text-sm text-center mt-2 hidden"></p>
         <p id="fichErr" class="text-red-400 text-sm text-center min-h-[1.25rem] mt-2"></p>
         <div class="grid grid-cols-2 gap-3 mt-2">
           <button id="btnEnt" onclick="fichar('entrada')" class="btn py-4 text-base bg-emerald-600 hover:bg-emerald-500 text-white"><i class="fa-solid fa-right-to-bracket"></i>Entrada</button>
           <button id="btnSal" onclick="fichar('salida')" class="btn py-4 text-base bg-rose-600 hover:bg-rose-500 text-white"><i class="fa-solid fa-right-from-bracket"></i>Salida</button>
         </div>
       </div>
-      <p class="text-center text-xs text-slate-500 mt-4">RelojLaboral Pro</p>
+      ${info.geo ? `<p class="text-center text-xs text-slate-400 mt-4">📍 Para fichar tenés que estar en el lugar: te vamos a pedir la ubicación del celular.</p>` : ""}
+      <p class="text-center text-xs text-slate-500 mt-2">RelojLaboral Pro</p>
     </div>
   </div>`;
   const tick = () => {
@@ -832,19 +1000,48 @@ async function renderFichaje() {
   tick(); clearInterval(S._reloj); S._reloj = setInterval(tick, 1000);
   $("dniInput").focus();
 }
+// Identificador de este celular (se crea una vez y queda guardado en el navegador)
+function idDispositivo() {
+  try {
+    let t = localStorage.getItem("rl_dispositivo");
+    if (!t || t.length < 16) {
+      const a = new Uint8Array(24); crypto.getRandomValues(a);
+      t = [...a].map(b => b.toString(16).padStart(2, "0")).join("");
+      localStorage.setItem("rl_dispositivo", t);
+    }
+    return t;
+  } catch { return null; }
+}
+function obtenerUbicacion() {
+  return new Promise(res => {
+    if (!navigator.geolocation) return res({ error: "Este celular no permite obtener la ubicación." });
+    navigator.geolocation.getCurrentPosition(
+      p => res({ lat: p.coords.latitude, lng: p.coords.longitude, precision: p.coords.accuracy }),
+      e => res({ error: e.code === 1
+        ? "Necesitamos tu ubicación para fichar. Permití el acceso a la ubicación (en el navegador, tocá el candado o el ícono de ajustes junto a la dirección) y probá de nuevo."
+        : e.code === 3 ? "No se pudo obtener la ubicación a tiempo. Activá el GPS y probá de nuevo." : "No se pudo obtener la ubicación. Activá el GPS y probá de nuevo." }),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 20000 });
+  });
+}
+function estadoFichaje(t) { const e = $("fichEstado"); if (!e) return; e.textContent = t || ""; e.classList.toggle("hidden", !t); }
 async function fichar(tipo) {
   const dni = $("dniInput").value.replace(/\D/g, "");
   $("fichErr").textContent = "";
   if (dni.length < 6) { $("fichErr").textContent = "Ingresá tu DNI completo."; return; }
   $("btnEnt").disabled = $("btnSal").disabled = true;
-  let r;
-  try { r = await rpc("rl_fichar", { p_token: qrParam, p_dni: dni, p_tipo: tipo }); }
-  catch { r = { ok: false, error: "Sin conexión. Probá de nuevo." }; }
-  if (!r.ok) {
-    $("fichErr").textContent = r.error;
-    $("btnEnt").disabled = $("btnSal").disabled = false;
-    return;
+  const reactivar = msg => { estadoFichaje(""); $("fichErr").textContent = msg; $("btnEnt").disabled = $("btnSal").disabled = false; };
+  let pos = { lat: null, lng: null, precision: null };
+  if (S.infoFichaje?.geo) {
+    estadoFichaje("📍 Obteniendo tu ubicación…");
+    pos = await obtenerUbicacion();
+    if (pos.error) return reactivar(pos.error);
   }
+  estadoFichaje("Registrando…");
+  let r;
+  try { r = await rpc("rl_fichar", { p_token: qrParam, p_dni: dni, p_tipo: tipo, p_lat: pos.lat, p_lng: pos.lng, p_precision: pos.precision, p_dispositivo: idDispositivo() }); }
+  catch { r = { ok: false, error: "Sin conexión. Probá de nuevo." }; }
+  if (!r.ok) return reactivar(r.error);
+  estadoFichaje("");
   const ent = r.tipo === "entrada";
   $("fichajeCuerpo").innerHTML = `
     <div class="text-center py-2">
@@ -857,6 +1054,8 @@ async function fichar(tipo) {
       ${ent && r.dia_laborable !== false && r.hora_salida_prog ? `<p class="text-sm text-slate-300 mt-1">Tu horario de salida: ${esc(r.hora_salida_prog)}</p>` : ""}
       ${!ent ? `<p class="text-sm text-slate-300">Jornada: ${fMin(r.minutos)}</p>` : ""}
       ${!ent && r.salida_anticipada_min > 0 ? `<p class="badge bg-orange-500/15 text-orange-300 mt-1">Salida anticipada: ${fMinCorto(r.salida_anticipada_min)}</p>` : ""}
+      ${r.lugar ? `<p class="text-xs text-slate-400 mt-2">${r.lugar === "remoto" ? "🏠 Desde tu lugar remoto" : "🏢 En la oficina"}${r.distancia_m != null ? ` · a ${r.distancia_m} m` : ""}</p>` : ""}
+      ${r.vinculado_ahora ? `<p class="text-xs text-emerald-300 mt-2">📱 Este celular quedó vinculado a tu DNI. Usá siempre este celular para fichar.</p>` : ""}
       <button class="btn btn-sec mt-5 w-full" onclick="renderFichaje()">Listo</button>
     </div>`;
   setTimeout(() => { if (document.body.contains($("fichajeCuerpo")) && !$("dniInput")) renderFichaje(); }, 8000);
