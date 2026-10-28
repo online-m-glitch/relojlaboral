@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RelojLaboral Pro - Control Horario con QR</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  body { font-family: 'Inter', sans-serif; }
+  .inp { width:100%; padding:.65rem .9rem; background:rgba(15,23,42,.6); border:1px solid #334155; border-radius:.75rem; color:#fff; outline:none; }
+  .inp:focus { border-color:#6366f1; box-shadow:0 0 0 3px rgba(99,102,241,.25); }
+  .lbl { display:block; font-size:.7rem; font-weight:600; color:#cbd5e1; text-transform:uppercase; letter-spacing:.04em; margin-bottom:.35rem; }
+  .btn { display:inline-flex; align-items:center; justify-content:center; gap:.45rem; padding:.55rem 1rem; border-radius:.7rem; font-weight:600; font-size:.85rem; transition:all .15s; cursor:pointer; }
+  .btn:disabled { opacity:.5; cursor:not-allowed; }
+  .btn-pri { background:#4f46e5; color:#fff; } .btn-pri:hover:not(:disabled) { background:#6366f1; }
+  .btn-sec { background:#334155; color:#e2e8f0; } .btn-sec:hover:not(:disabled) { background:#475569; }
+  .btn-dan { background:rgba(239,68,68,.15); color:#fca5a5; } .btn-dan:hover:not(:disabled) { background:rgba(239,68,68,.3); }
+  .btn-sm { padding:.35rem .65rem; font-size:.75rem; }
+  .card { background:#1e293b; border:1px solid #334155; border-radius:1rem; }
+  .tbl { width:100%; font-size:.85rem; }
+  .tbl th { text-align:left; font-size:.7rem; text-transform:uppercase; color:#94a3b8; font-weight:600; padding:.6rem .75rem; border-bottom:1px solid #334155; white-space:nowrap; }
+  .tbl td { padding:.6rem .75rem; border-bottom:1px solid rgba(51,65,85,.5); }
+  .tbl tr:hover td { background:rgba(51,65,85,.25); }
+  .nav-item { display:flex; align-items:center; gap:.7rem; width:100%; padding:.6rem .8rem; border-radius:.7rem; font-size:.875rem; color:#cbd5e1; }
+  .nav-item:hover { background:#334155; } .nav-item.act { background:rgba(99,102,241,.2); color:#fff; }
+  .badge { display:inline-block; padding:.15rem .55rem; border-radius:999px; font-size:.7rem; font-weight:600; }
+  .qrbox canvas, .qrbox img { background:#fff; padding:8px; border-radius:.6rem; }
+</style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col">
+<div id="app" class="flex-grow flex flex-col"></div>
+<div id="modal" class="fixed inset-0 bg-black/60 hidden items-center justify-center p-4 z-40"></div>
+<div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 hidden"></div>
+
+<script>
+// ================== CONFIGURACIÓN ==================
+// La clave "anon" es pública por diseño: la seguridad la dan las reglas (RLS) de la base.
+const SUPABASE_URL = "https://olskkrvkwiqiakwlgfes.supabase.co";
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9sc2trcnZrd2lxaWFrd2xnZmVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMxNDAxMDksImV4cCI6MjEwODcxNjEwOX0.7fJSTM0fTRHLeoKMh6fSgxHEF0_6c-iaZzJtMiwvaig";
+const ZONA = "America/Argentina/Buenos_Aires";
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, { auth: { persistSession: true, storageKey: "reloj_laboral_sesion" } });
+const qrParam = new URLSearchParams(location.search).get("qr");
+
+const S = { user: null, perfil: null, empresaId: null, empresa: null, tab: "panel", superTab: "empresas", baseUrl: "", cache: {} };
+
+// ================== UTILIDADES ==================
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+const fFecha = ts => ts ? new Date(ts).toLocaleDateString("es-AR", { timeZone: ZONA, day:"2-digit", month:"2-digit", year:"numeric" }) : "—";
+const fHora = ts => ts ? new Date(ts).toLocaleTimeString("es-AR", { timeZone: ZONA, hour:"2-digit", minute:"2-digit", hour12:false }) : "—";
+const fMin = m => { m = Math.max(0, Math.round(m || 0)); return Math.floor(m/60) + "h " + String(m%60).padStart(2,"0") + "m"; };
+const hoyISO = () => new Date().toLocaleDateString("en-CA", { timeZone: ZONA });
+const sumarDias = (iso, d) => { const x = new Date(iso + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + d); return x.toISOString().slice(0,10); };
+const linkQR = tok => {
+  let b = (S.baseUrl || (location.origin + location.pathname)).split(/[?#]/)[0];
+  if (!/\/$/.test(b) && !/\.html?$/i.test(b)) b += "/";
+  return b + "?qr=" + encodeURIComponent(tok);
+};
+
+function toast(msg, tipo = "ok") {
+  const t = $("toast");
+  t.innerHTML = `<div class="px-4 py-3 rounded-xl shadow-2xl text-sm font-medium ${tipo === "error" ? "bg-red-600" : "bg-emerald-600"}">${esc(msg)}</div>`;
+  t.classList.remove("hidden"); clearTimeout(t._t); t._t = setTimeout(() => t.classList.add("hidden"), 3500);
+}
+function abrirModal(html, { fijo = false } = {}) {
+  const m = $("modal");
+  m.innerHTML = `<div class="card w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 shadow-2xl relative">
+    ${fijo ? "" : `<button onclick="cerrarModal()" class="absolute top-3 right-4 text-slate-400 hover:text-white text-xl" aria-label="Cerrar">✕</button>`}${html}</div>`;
+  m.dataset.fijo = fijo ? "1" : ""; m.classList.remove("hidden"); m.classList.add("flex");
+  setTimeout(() => m.querySelector("input,select")?.focus(), 30);
+}
+function cerrarModal(forzar) { const m = $("modal"); if (m.dataset.fijo && !forzar) return; m.classList.add("hidden"); m.classList.remove("flex"); m.innerHTML = ""; }
+document.addEventListener("keydown", e => { if (e.key === "Escape") cerrarModal(); });
+$("modal").addEventListener("click", e => { if (e.target.id === "modal") cerrarModal(); });
+
+function errTxt(e) {
+  const m = e?.message || String(e);
+  if (/duplicate key.*dni/i.test(m) || /colaboradores_empresa_id_dni_key/.test(m)) return "Ya existe un colaborador con ese DNI.";
+  if (/violates foreign key.*registros/i.test(m)) return "Tiene fichajes registrados: desactivalo en lugar de borrarlo.";
+  if (/Invalid login credentials/i.test(m)) return "Email o contraseña incorrectos.";
+  if (/check constraint.*dni/i.test(m)) return "El DNI debe tener entre 6 y 9 números.";
+  return m;
+}
+async function rpc(fn, args) { const { data, error } = await sb.rpc(fn, args); if (error) throw error; return data; }
+async function adminFn(body) {
+  const { data, error } = await sb.functions.invoke("rl-admin", { body });
+  if (error) { let m = error.message; try { m = (await error.context.json()).error || m; } catch {} throw new Error(m); }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+function pintarQRs(root = document) {
+  root.querySelectorAll("[data-qr]").forEach(el => {
+    if (el.dataset.hecho) return; el.dataset.hecho = "1";
+    new QRCode(el, { text: el.dataset.qr, width: +el.dataset.size || 140, height: +el.dataset.size || 140, correctLevel: QRCode.CorrectLevel.M });
+  });
+}
+function cargando(txt = "Cargando…") { return `<div class="flex-grow flex items-center justify-center text-slate-400 text-sm"><i class="fa-solid fa-spinner fa-spin mr-2"></i>${txt}</div>`; }
+
+// ================== ARRANQUE ==================
+async function init() {
+  if (qrParam) return renderFichaje();
+  $("app").innerHTML = cargando();
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) return renderLogin();
+  await cargarSesion(session.user);
+}
+async function cargarSesion(user) {
+  S.user = user;
+  const { data: perfil, error } = await sb.from("perfiles").select("*").eq("user_id", user.id).maybeSingle();
+  if (error || !perfil) { await sb.auth.signOut(); return renderLogin("Tu usuario no tiene acceso a la plataforma."); }
+  S.perfil = perfil;
+  const { data: cfg } = await sb.from("config").select("valor").eq("clave", "base_url").maybeSingle();
+  S.baseUrl = cfg?.valor || "";
+  if (perfil.rol === "empresa") {
+    const { data: emp } = await sb.from("empresas").select("*").eq("id", perfil.empresa_id).maybeSingle();
+    if (!emp) { await sb.auth.signOut(); return renderLogin("La cuenta de tu empresa está desactivada. Contactá al proveedor."); }
+    S.empresaId = emp.id; S.empresa = emp; S.tab = "panel";
+  }
+  route();
+  if (perfil.clave_temporal) abrirCambioClave(true);
+}
+function route() {
+  if (S.perfil.rol === "superadmin" && !S.empresaId) return renderSuper();
+  renderEmpresa();
+}
+async function logout() { await sb.auth.signOut(); Object.assign(S, { user:null, perfil:null, empresaId:null, empresa:null }); cerrarModal(true); renderLogin(); }
+
+// ================== LOGIN ==================
+function renderLogin(aviso = "") {
+  $("app").innerHTML = `
+  <div class="flex-grow flex items-center justify-center p-4 bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950">
+    <div class="bg-slate-800/80 backdrop-blur border border-slate-700/60 p-8 rounded-2xl shadow-2xl w-full max-w-md">
+      <div class="text-center mb-8">
+        <div class="w-14 h-14 mx-auto mb-3 rounded-2xl bg-indigo-600/20 text-indigo-300 flex items-center justify-center text-2xl"><i class="fa-solid fa-clock"></i></div>
+        <h1 class="text-2xl font-bold tracking-tight text-white">RelojLaboral Pro</h1>
+        <p class="text-slate-400 text-sm mt-1">Plataforma SaaS de Control Horario con QR</p>
+      </div>
+      ${aviso ? `<div class="mb-4 p-3 rounded-xl bg-amber-500/15 text-amber-200 text-sm">${esc(aviso)}</div>` : ""}
+      <form onsubmit="handleLogin(event)" class="space-y-4">
+        <div><label class="lbl" for="loginUser">Email</label><input type="email" id="loginUser" required autocomplete="username" class="inp"></div>
+        <div><label class="lbl" for="loginPass">Contraseña</label><input type="password" id="loginPass" required autocomplete="current-password" class="inp"></div>
+        <p id="loginError" class="text-red-400 text-sm min-h-[1.25rem]"></p>
+        <button type="submit" id="btnLogin" class="btn btn-pri w-full py-3">Iniciar sesión</button>
+      </form>
+    </div>
+  </div>`;
+}
+async function handleLogin(e) {
+  e.preventDefault();
+  const b = $("btnLogin"); b.disabled = true; $("loginError").textContent = "";
+  const { data, error } = await sb.auth.signInWithPassword({ email: $("loginUser").value.trim(), password: $("loginPass").value });
+  b.disabled = false;
+  if (error) { $("loginError").textContent = errTxt(error); return; }
+  $("app").innerHTML = cargando();
+  await cargarSesion(data.user);
+}
+
+// ================== CAMBIO DE CLAVE ==================
+function abrirCambioClave(obligatorio) {
+  abrirModal(`
+    <h3 class="text-lg font-bold mb-1">${obligatorio ? "Elegí tu contraseña" : "Cambiar mi contraseña"}</h3>
+    <p class="text-sm text-slate-400 mb-4">${obligatorio ? "Estás usando una contraseña temporal. Cambiala para continuar." : "Mínimo 8 caracteres, con letras y números."}</p>
+    <div class="space-y-3">
+      <div><label class="lbl">Contraseña actual</label><input type="password" id="clvAct" class="inp" autocomplete="current-password"></div>
+      <div><label class="lbl">Nueva contraseña</label><input type="password" id="clvNue" class="inp" autocomplete="new-password"></div>
+      <div><label class="lbl">Repetir nueva</label><input type="password" id="clvRep" class="inp" autocomplete="new-password"></div>
+      <p id="clvErr" class="text-red-400 text-sm min-h-[1.25rem]"></p>
+      <div class="flex gap-2 justify-end">
+        ${obligatorio ? `<button class="btn btn-sec" onclick="logout()">Cerrar sesión</button>` : `<button class="btn btn-sec" onclick="cerrarModal()">Cancelar</button>`}
+        <button class="btn btn-pri" id="btnClv" onclick="guardarClave()">Guardar</button>
+      </div>
+    </div>`, { fijo: obligatorio });
+}
+async function guardarClave() {
+  const a = $("clvAct").value, n = $("clvNue").value, r = $("clvRep").value, err = $("clvErr");
+  err.textContent = "";
+  if (n.length < 8) return err.textContent = "La nueva contraseña debe tener al menos 8 caracteres.";
+  if (!/[a-zA-Z]/.test(n) || !/\d/.test(n)) return err.textContent = "Tiene que tener letras y números.";
+  if (n !== r) return err.textContent = "Las contraseñas nuevas no coinciden.";
+  if (n === a) return err.textContent = "La nueva tiene que ser distinta de la actual.";
+  const b = $("btnClv"); b.disabled = true;
+  const chk = await sb.auth.signInWithPassword({ email: S.user.email, password: a });
+  if (chk.error) { b.disabled = false; return err.textContent = "La contraseña actual no es correcta."; }
+  const { error } = await sb.auth.updateUser({ password: n });
+  if (error) { b.disabled = false; return err.textContent = errTxt(error); }
+  await rpc("rl_clave_cambiada").catch(() => {});
+  S.perfil.clave_temporal = false;
+  cerrarModal(true); toast("Contraseña actualizada");
+}
+
+// ================== SUPERADMIN ==================
+async function renderSuper() {
+  $("app").innerHTML = `
+  <header class="bg-slate-800 border-b border-slate-700 px-4 md:px-6 py-4 flex flex-wrap gap-3 justify-between items-center shadow-md">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 bg-amber-500/20 text-amber-400 rounded-lg flex items-center justify-center">👑</div>
+      <div><h2 class="text-lg font-bold text-white leading-tight">Super Administrador</h2><p class="text-xs text-slate-400">${esc(S.user.email)}</p></div>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <button class="btn btn-sm ${S.superTab === "empresas" ? "btn-pri" : "btn-sec"}" onclick="S.superTab='empresas';renderSuper()"><i class="fa-solid fa-building"></i>Empresas</button>
+      <button class="btn btn-sm ${S.superTab === "config" ? "btn-pri" : "btn-sec"}" onclick="S.superTab='config';renderSuper()"><i class="fa-solid fa-gear"></i>Configuración</button>
+      <button class="btn btn-sm btn-sec" onclick="abrirCambioClave(false)"><i class="fa-solid fa-key"></i>Mi clave</button>
+      <button class="btn btn-sm btn-sec" onclick="logout()"><i class="fa-solid fa-right-from-bracket"></i>Salir</button>
+    </div>
+  </header>
+  <main id="superMain" class="p-4 md:p-6 max-w-7xl mx-auto w-full flex-grow">${cargando()}</main>`;
+  if (S.superTab === "config") return renderSuperConfig();
+  await renderSuperEmpresas();
+}
+
+async function renderSuperEmpresas() {
+  const [{ data: emps, error }, { data: ofis }, { data: cols }] = await Promise.all([
+    sb.from("empresas").select("*").order("nombre"),
+    sb.from("oficinas").select("*").order("nombre"),
+    sb.from("colaboradores").select("empresa_id, estado"),
+  ]);
+  if (error) { $("superMain").innerHTML = `<p class="text-red-400">${esc(error.message)}</p>`; return; }
+  S.cache.empresas = emps; S.cache.oficinas = ofis || [];
+  const qrActivos = (ofis || []).filter(o => o.activa && emps.find(e => e.id === o.empresa_id)?.activa).length;
+  $("superMain").innerHTML = `
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+      ${stat("Empresas", emps.length, "fa-building", "indigo")}
+      ${stat("Empresas activas", emps.filter(e => e.activa).length, "fa-circle-check", "emerald")}
+      ${stat("QR activos (facturables)", qrActivos, "fa-qrcode", "amber")}
+      ${stat("Colaboradores", (cols || []).filter(c => c.estado === "Activa").length, "fa-users", "sky")}
+    </div>
+    <div class="flex flex-wrap gap-3 justify-between items-center mb-4">
+      <h3 class="text-xl font-bold">Empresas clientes y sucursales</h3>
+      <button class="btn btn-pri" onclick="abrirNuevaEmpresa()"><i class="fa-solid fa-plus"></i>Nueva empresa</button>
+    </div>
+    <div class="space-y-5">
+      ${emps.length ? emps.map(emp => cardEmpresa(emp, (ofis || []).filter(o => o.empresa_id === emp.id), (cols || []).filter(c => c.empresa_id === emp.id && c.estado === "Activa").length)).join("") : `<p class="text-slate-400">Todavía no hay empresas.</p>`}
+    </div>`;
+  pintarQRs();
+}
+function stat(t, v, ic, col) {
+  return `<div class="card p-4"><div class="flex items-center justify-between"><p class="text-xs text-slate-400 font-medium">${t}</p><i class="fa-solid ${ic} text-${col}-400"></i></div><p class="text-2xl font-bold mt-1">${v}</p></div>`;
+}
+function cardEmpresa(emp, ofis, nCols) {
+  return `
+  <div class="card p-5 ${emp.activa ? "" : "opacity-60"}">
+    <div class="flex flex-wrap gap-3 justify-between items-start mb-4">
+      <div>
+        <h4 class="text-lg font-bold text-white">${esc(emp.nombre)} ${emp.activa ? `<span class="badge bg-emerald-500/15 text-emerald-300 ml-1">Activa</span>` : `<span class="badge bg-red-500/15 text-red-300 ml-1">Desactivada</span>`}</h4>
+        <p class="text-xs text-slate-400 mt-1">${ofis.length} oficina(s) · ${nCols} colaborador(es) activos · Entrada ${emp.hora_entrada.slice(0,5)} (tolerancia ${emp.tolerancia_min} min) · Alta ${fFecha(emp.created_at)}</p>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <button class="btn btn-sm btn-pri" onclick="entrarEmpresa('${emp.id}')"><i class="fa-solid fa-arrow-right-to-bracket"></i>Ver panel</button>
+        <button class="btn btn-sm btn-sec" onclick="abrirUsuarios('${emp.id}')"><i class="fa-solid fa-user-shield"></i>Usuarios</button>
+        <button class="btn btn-sm btn-sec" onclick="abrirEditarEmpresa('${emp.id}')"><i class="fa-solid fa-pen"></i>Editar</button>
+        <button class="btn btn-sm ${emp.activa ? "btn-dan" : "btn-sec"}" onclick="toggleEmpresa('${emp.id}', ${!emp.activa})">${emp.activa ? "Desactivar" : "Activar"}</button>
+      </div>
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      ${ofis.map(o => `
+        <div class="bg-slate-900/60 border border-slate-700 p-4 rounded-xl flex gap-3 ${o.activa ? "" : "opacity-50"}">
+          <div class="qrbox shrink-0" data-qr="${esc(linkQR(o.qr_token))}" data-size="96"></div>
+          <div class="min-w-0 flex-grow">
+            <h6 class="font-bold text-white text-sm truncate">${esc(o.nombre)}</h6>
+            <p class="text-xs text-slate-400 truncate">${esc(o.direccion) || "Sin dirección"}</p>
+            <p class="text-[10px] font-mono text-amber-400 mt-1 break-all">${esc(o.qr_token)}</p>
+            <div class="flex flex-wrap gap-1 mt-2">
+              <button class="btn btn-sm btn-sec" title="Imprimir" onclick="imprimirQR('${o.id}')"><i class="fa-solid fa-print"></i></button>
+              <button class="btn btn-sm btn-sec" title="Editar" onclick="abrirOficina('${emp.id}','${o.id}')"><i class="fa-solid fa-pen"></i></button>
+              <button class="btn btn-sm btn-sec" title="Regenerar QR" onclick="regenerarQR('${o.id}')"><i class="fa-solid fa-rotate"></i></button>
+              <button class="btn btn-sm btn-sec" title="${o.activa ? "Desactivar" : "Activar"}" onclick="toggleOficina('${o.id}', ${!o.activa})"><i class="fa-solid ${o.activa ? "fa-pause" : "fa-play"}"></i></button>
+              <button class="btn btn-sm btn-dan" title="Eliminar" onclick="borrarOficina('${o.id}')"><i class="fa-solid fa-trash"></i></button>
+            </div>
+          </div>
+        </div>`).join("")}
+      <button onclick="abrirOficina('${emp.id}')" class="border-2 border-dashed border-slate-700 hover:border-indigo-500 rounded-xl p-4 text-slate-400 hover:text-indigo-300 text-sm min-h-[120px]"><i class="fa-solid fa-plus mr-1"></i>Nueva oficina / QR</button>
+    </div>
+  </div>`;
+}
+
+function abrirNuevaEmpresa() {
+  abrirModal(`
+    <h3 class="text-lg font-bold mb-4">Nueva empresa cliente</h3>
+    <div class="space-y-3">
+      <div><label class="lbl">Nombre de la empresa</label><input id="neNom" class="inp"></div>
+      <div><label class="lbl">Email del administrador</label><input id="neMail" type="email" class="inp"></div>
+      <div><label class="lbl">Nombre del administrador (opcional)</label><input id="neAdm" class="inp"></div>
+      <div><label class="lbl">Primera oficina (opcional)</label><input id="neOfi" class="inp" placeholder="Ej: Casa central"></div>
+      <p class="text-xs text-slate-400">Se crea el usuario con una contraseña temporal que vas a ver una sola vez. Al entrar, el sistema le pide cambiarla.</p>
+      <p id="neErr" class="text-red-400 text-sm min-h-[1.25rem]"></p>
+      <div class="flex justify-end gap-2"><button class="btn btn-sec" onclick="cerrarModal()">Cancelar</button><button id="neBtn" class="btn btn-pri" onclick="crearEmpresa()">Crear</button></div>
+    </div>`);
+}
+async function crearEmpresa() {
+  const b = $("neBtn"); b.disabled = true; $("neErr").textContent = "";
+  try {
+    const r = await adminFn({ accion: "crear_empresa", nombre: $("neNom").value, email: $("neMail").value.trim(), nombre_admin: $("neAdm").value.trim() });
+    const ofi = $("neOfi").value.trim();
+    if (ofi) { const { error } = await sb.from("oficinas").insert({ empresa_id: r.empresa.id, nombre: ofi }); if (error) toast(error.message, "error"); }
+    mostrarClave(r.usuario.email, r.usuario.clave_temporal, `Empresa "${r.empresa.nombre}" creada.`);
+    renderSuperEmpresas();
+  } catch (e) { $("neErr").textContent = errTxt(e); b.disabled = false; }
+}
+function mostrarClave(email, clave, titulo) {
+  abrirModal(`
+    <h3 class="text-lg font-bold mb-2">${esc(titulo)}</h3>
+    <p class="text-sm text-slate-300 mb-4">Pasale estos datos al cliente. <b>La contraseña no se vuelve a mostrar.</b></p>
+    <div class="bg-slate-900 rounded-xl p-4 font-mono text-sm space-y-1">
+      <div><span class="text-slate-400">Panel:</span> ${esc(location.origin + location.pathname)}</div>
+      <div><span class="text-slate-400">Email:</span> ${esc(email)}</div>
+      <div><span class="text-slate-400">Contraseña temporal:</span> <span class="text-amber-300">${esc(clave)}</span></div>
+    </div>
+    <div class="flex justify-end gap-2 mt-4">
+      <button class="btn btn-sec" onclick="navigator.clipboard.writeText(${esc(JSON.stringify(`Panel: ${location.origin + location.pathname}\nEmail: ${email}\nContraseña temporal: ${clave}`))}).then(()=>toast('Copiado'))"><i class="fa-solid fa-copy"></i>Copiar</button>
+      <button class="btn btn-pri" onclick="cerrarModal()">Listo</button>
+    </div>`);
+}
+function abrirEditarEmpresa(id) {
+  const e = S.cache.empresas.find(x => x.id === id);
+  abrirModal(`
+    <h3 class="text-lg font-bold mb-4">Editar empresa</h3>
+    <div class="space-y-3">
+      <div><label class="lbl">Nombre</label><input id="eeNom" class="inp" value="${esc(e.nombre)}"></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="lbl">Hora de entrada</label><input id="eeHora" type="time" class="inp" value="${e.hora_entrada.slice(0,5)}"></div>
+        <div><label class="lbl">Tolerancia (min)</label><input id="eeTol" type="number" min="0" max="240" class="inp" value="${e.tolerancia_min}"></div>
+      </div>
+      <div class="flex justify-between gap-2 pt-2">
+        <button class="btn btn-dan" onclick="borrarEmpresa('${id}')"><i class="fa-solid fa-trash"></i>Eliminar</button>
+        <div class="flex gap-2"><button class="btn btn-sec" onclick="cerrarModal()">Cancelar</button><button class="btn btn-pri" onclick="guardarEmpresa('${id}')">Guardar</button></div>
+      </div>
+    </div>`);
+}
+async function guardarEmpresa(id) {
+  const { error } = await sb.from("empresas").update({ nombre: $("eeNom").value.trim(), hora_entrada: $("eeHora").value, tolerancia_min: +$("eeTol").value }).eq("id", id);
+  if (error) return toast(errTxt(error), "error");
+  cerrarModal(); toast("Empresa guardada"); renderSuperEmpresas();
+}
+async function toggleEmpresa(id, activa) {
+  if (!activa && !confirm("¿Desactivar la empresa? Sus usuarios no van a poder entrar y sus QR dejan de funcionar.")) return;
+  const { error } = await sb.from("empresas").update({ activa }).eq("id", id);
+  if (error) return toast(errTxt(error), "error");
+  toast(activa ? "Empresa activada" : "Empresa desactivada"); renderSuperEmpresas();
+}
+async function borrarEmpresa(id) {
+  const e = S.cache.empresas.find(x => x.id === id);
+  if (prompt(`Esto borra la empresa, sus oficinas, colaboradores, usuarios y TODOS sus fichajes.\nEscribí el nombre "${e.nombre}" para confirmar:`) !== e.nombre) return;
+  try {
+    const { usuarios } = await adminFn({ accion: "listar_usuarios", empresa_id: id });
+    for (const u of usuarios) await adminFn({ accion: "eliminar_usuario", user_id: u.user_id });
+    await sb.from("registros").delete().eq("empresa_id", id);
+    const { error } = await sb.from("empresas").delete().eq("id", id);
+    if (error) throw error;
+    cerrarModal(); toast("Empresa eliminada"); renderSuperEmpresas();
+  } catch (err) { toast(errTxt(err), "error"); }
+}
+
+function abrirOficina(empresaId, ofiId) {
+  const o = ofiId ? S.cache.oficinas.find(x => x.id === ofiId) : { nombre: "", direccion: "" };
+  abrirModal(`
+    <h3 class="text-lg font-bold mb-4">${ofiId ? "Editar oficina" : "Nueva oficina / punto de fichaje"}</h3>
+    <div class="space-y-3">
+      <div><label class="lbl">Nombre</label><input id="ofNom" class="inp" value="${esc(o.nombre)}"></div>
+      <div><label class="lbl">Dirección</label><input id="ofDir" class="inp" value="${esc(o.direccion)}"></div>
+      ${ofiId ? "" : `<p class="text-xs text-slate-400">El código QR se genera solo al guardar.</p>`}
+      <div class="flex justify-end gap-2"><button class="btn btn-sec" onclick="cerrarModal()">Cancelar</button><button class="btn btn-pri" onclick="guardarOficina('${empresaId}','${ofiId || ""}')">Guardar</button></div>
+    </div>`);
+}
+async function guardarOficina(empresaId, ofiId) {
+  const fila = { nombre: $("ofNom").value.trim(), direccion: $("ofDir").value.trim() };
+  if (!fila.nombre) return toast("Falta el nombre", "error");
+  const { error } = ofiId ? await sb.from("oficinas").update(fila).eq("id", ofiId) : await sb.from("oficinas").insert({ ...fila, empresa_id: empresaId });
+  if (error) return toast(errTxt(error), "error");
+  cerrarModal(); toast(ofiId ? "Oficina guardada" : "Oficina y QR creados"); renderSuperEmpresas();
+}
+async function regenerarQR(id) {
+  if (!confirm("¿Regenerar el QR? El código impreso actual deja de funcionar y hay que imprimir el nuevo.")) return;
+  try { await rpc("rl_regenerar_qr", { p_oficina: id }); toast("QR regenerado"); renderSuperEmpresas(); } catch (e) { toast(errTxt(e), "error"); }
+}
+async function toggleOficina(id, activa) {
+  const { error } = await sb.from("oficinas").update({ activa }).eq("id", id);
+  if (error) return toast(errTxt(error), "error");
+  toast(activa ? "QR activado" : "QR desactivado"); renderSuperEmpresas();
+}
+async function borrarOficina(id) {
+  if (!confirm("¿Eliminar la oficina? Los fichajes hechos ahí se conservan, sin el nombre de la oficina.")) return;
+  const { error } = await sb.from("oficinas").delete().eq("id", id);
+  if (error) return toast(errTxt(error), "error");
+  toast("Oficina eliminada"); renderSuperEmpresas();
+}
+function imprimirQR(id) {
+  const o = (S.cache.oficinas || []).find(x => x.id === id);
+  const emp = S.empresa || (S.cache.empresas || []).find(e => e.id === o.empresa_id);
+  const tmp = document.createElement("div"); tmp.style.display = "none"; document.body.appendChild(tmp);
+  new QRCode(tmp, { text: linkQR(o.qr_token), width: 600, height: 600, correctLevel: QRCode.CorrectLevel.M });
+  setTimeout(() => {
+    const src = (tmp.querySelector("canvas")?.toDataURL()) || tmp.querySelector("img")?.src;
+    tmp.remove();
+    const w = window.open("", "_blank");
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>QR ${esc(o.nombre)}</title>
+      <style>body{font-family:Arial,sans-serif;text-align:center;padding:40px;color:#111}img{width:320px;height:320px}h1{margin:.2em 0}p{color:#444}</style></head>
+      <body><h1>Fichá tu entrada y salida</h1><p>${esc(emp?.nombre || "")} · ${esc(o.nombre)}</p><img src="${src}"><p>Escaneá el código con la cámara del celular e ingresá tu DNI.</p>
+      <p style="font-size:11px;color:#888">${esc(o.qr_token)}</p><script>setTimeout(()=>print(),300)<\/script></body></html>`);
+    w.document.close();
+  }, 100);
+}
+
+async function abrirUsuarios(empresaId) {
+  const emp = S.cache.empresas.find(e => e.id === empresaId);
+  abrirModal(`<h3 class="text-lg font-bold mb-4">Usuarios de ${esc(emp.nombre)}</h3><div id="usrLista">${cargando()}</div>`);
+  try {
+    const { usuarios } = await adminFn({ accion: "listar_usuarios", empresa_id: empresaId });
+    $("usrLista").innerHTML = `
+      <div class="space-y-2 mb-4">${usuarios.length ? usuarios.map(u => `
+        <div class="bg-slate-900/60 rounded-xl p-3 flex flex-wrap gap-2 justify-between items-center">
+          <div class="min-w-0"><p class="text-sm font-medium truncate">${esc(u.email)}</p>
+          <p class="text-xs text-slate-400">${esc(u.nombre || "")} ${u.clave_temporal ? `<span class="badge bg-amber-500/15 text-amber-300">Clave temporal</span>` : ""} · Último ingreso: ${u.ultimo_ingreso ? fFecha(u.ultimo_ingreso) + " " + fHora(u.ultimo_ingreso) : "nunca"}</p></div>
+          <div class="flex gap-1"><button class="btn btn-sm btn-sec" onclick="resetClave('${u.user_id}','${esc(u.email)}')">Nueva clave</button>
+          <button class="btn btn-sm btn-dan" onclick="borrarUsuario('${u.user_id}','${empresaId}')"><i class="fa-solid fa-trash"></i></button></div>
+        </div>`).join("") : `<p class="text-sm text-slate-400">Sin usuarios.</p>`}</div>
+      <div class="border-t border-slate-700 pt-4 space-y-3">
+        <p class="text-sm font-semibold">Agregar administrador</p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2"><input id="nuMail" type="email" placeholder="Email" class="inp"><input id="nuNom" placeholder="Nombre (opcional)" class="inp"></div>
+        <button class="btn btn-pri" onclick="crearUsuario('${empresaId}')"><i class="fa-solid fa-user-plus"></i>Crear usuario</button>
+      </div>`;
+  } catch (e) { $("usrLista").innerHTML = `<p class="text-red-400 text-sm">${esc(errTxt(e))}</p>`; }
+}
+async function crearUsuario(empresaId) {
+  try {
+    const { usuario } = await adminFn({ accion: "crear_usuario", empresa_id: empresaId, email: $("nuMail").value.trim(), nombre: $("nuNom").value.trim() });
+    mostrarClave(usuario.email, usuario.clave_temporal, "Usuario creado.");
+  } catch (e) { toast(errTxt(e), "error"); }
+}
+async function resetClave(uid, email) {
+  if (!confirm(`¿Generar una contraseña temporal nueva para ${email}?`)) return;
+  try { const r = await adminFn({ accion: "resetear_clave", user_id: uid }); mostrarClave(email, r.clave_temporal, "Contraseña restablecida."); }
+  catch (e) { toast(errTxt(e), "error"); }
+}
+async function borrarUsuario(uid, empresaId) {
+  if (!confirm("¿Eliminar este usuario? No va a poder entrar más.")) return;
+  try { await adminFn({ accion: "eliminar_usuario", user_id: uid }); toast("Usuario eliminado"); abrirUsuarios(empresaId); }
+  catch (e) { toast(errTxt(e), "error"); }
+}
+function entrarEmpresa(id) {
+  S.empresa = S.cache.empresas.find(e => e.id === id); S.empresaId = id; S.tab = "panel";
+  S.cache.colaboradores = null; S.cache.registros = null; S.filtroReg = null; renderEmpresa();
+}
+function salirEmpresa() { S.empresaId = null; S.empresa = null; S.cache.colaboradores = null; S.cache.registros = null; S.filtroReg = null; clearInterval(S._refresco); renderSuper(); }
+
+function renderSuperConfig() {
+  $("superMain").innerHTML = `
+    <div class="card p-6 max-w-2xl">
+      <h3 class="text-lg font-bold mb-1">URL base de fichaje</h3>
+      <p class="text-sm text-slate-400 mb-4">Dirección donde está publicado este panel. Los QR apuntan a <span class="font-mono text-amber-300">URL base + ?qr=TOKEN</span>. Si la cambiás, todos los QR impresos dejan de funcionar.</p>
+      <label class="lbl">URL base</label>
+      <input id="cfgUrl" class="inp font-mono" value="${esc(S.baseUrl)}">
+      <div class="flex flex-wrap gap-2 mt-4">
+        <button class="btn btn-sec" onclick="$('cfgUrl').value=location.origin+location.pathname">Usar la dirección actual</button>
+        <button class="btn btn-pri" onclick="guardarBaseUrl()">Guardar</button>
+      </div>
+      <p class="text-xs text-slate-500 mt-3">Dirección actual de esta página: <span class="font-mono">${esc(location.origin + location.pathname)}</span></p>
+    </div>`;
+}
+async function guardarBaseUrl() {
+  const v = $("cfgUrl").value.trim();
+  if (!/^https?:\/\/\S+$/.test(v)) return toast("Ingresá una URL válida (https://…)", "error");
+  if (v !== S.baseUrl && !confirm("Cambiar la URL invalida los QR impresos. ¿Continuar?")) return;
+  const { error } = await sb.from("config").update({ valor: v }).eq("clave", "base_url");
+  if (error) return toast(errTxt(error), "error");
+  S.baseUrl = v; toast("URL guardada");
+}
+
+// ================== PANEL DE EMPRESA ==================
+const TABS = [
+  ["panel", "Panel", "fa-chart-line"],
+  ["oficinas", "Oficinas / QR", "fa-qrcode"],
+  ["colaboradores", "Colaboradores", "fa-users"],
+  ["registros", "Registros", "fa-list-check"],
+  ["ajustes", "Horario", "fa-clock"],
+];
+function renderEmpresa() {
+  const esSuper = S.perfil.rol === "superadmin";
+  $("app").innerHTML = `
+  <div class="flex flex-col md:flex-row flex-grow">
+    <aside class="w-full md:w-64 bg-slate-800 border-b md:border-b-0 md:border-r border-slate-700 p-4 flex flex-col">
+      ${esSuper ? `<button onclick="salirEmpresa()" class="btn btn-sm btn-sec mb-3 w-full"><i class="fa-solid fa-arrow-left"></i>Volver a superadmin</button>` : ""}
+      <div class="flex items-center gap-3 mb-5">
+        <div class="w-10 h-10 rounded-xl bg-indigo-600/20 text-indigo-300 flex items-center justify-center"><i class="fa-solid fa-building"></i></div>
+        <div class="min-w-0"><h3 class="font-bold text-sm text-white truncate">${esc(S.empresa.nombre)}</h3><p class="text-xs text-slate-400 truncate">${esc(S.user.email)}</p></div>
+      </div>
+      <nav class="flex md:flex-col gap-1 overflow-x-auto">
+        ${TABS.map(([k, t, ic]) => `<button class="nav-item ${S.tab === k ? "act" : ""} shrink-0" onclick="S.tab='${k}';renderEmpresa()"><i class="fa-solid ${ic} w-4"></i>${t}</button>`).join("")}
+      </nav>
+      <div class="mt-auto pt-4 space-y-2 hidden md:block">
+        <button onclick="abrirCambioClave(false)" class="w-full btn btn-sm btn-sec"><i class="fa-solid fa-key"></i>Cambiar mi clave</button>
+        <button onclick="logout()" class="w-full btn btn-sm btn-sec"><i class="fa-solid fa-right-from-bracket"></i>Cerrar sesión</button>
+      </div>
+      <div class="flex gap-2 pt-3 md:hidden">
+        <button onclick="abrirCambioClave(false)" class="btn btn-sm btn-sec flex-1"><i class="fa-solid fa-key"></i>Clave</button>
+        <button onclick="logout()" class="btn btn-sm btn-sec flex-1"><i class="fa-solid fa-right-from-bracket"></i>Salir</button>
+      </div>
+    </aside>
+    <main id="empMain" class="flex-grow p-4 md:p-6 bg-slate-900 min-w-0">${cargando()}</main>
+  </div>`;
+  clearInterval(S._refresco);
+  ({ panel: tabPanel, oficinas: tabOficinas, colaboradores: tabColaboradores, registros: tabRegistros, ajustes: tabAjustes })[S.tab]();
+}
+
+// ---- Panel ----
+async function tabPanel() {
+  const cargar = async () => {
+    if (S.tab !== "panel" || !$("empMain")) return clearInterval(S._refresco);
+    try {
+      const [r, { data: hoy }] = await Promise.all([
+        rpc("rl_resumen_hoy", { p_empresa: S.empresaId }),
+        sb.from("registros").select("id, entrada, salida, tardanza_min, colaboradores(nombre, cargo), oficina:oficinas!registros_oficina_id_fkey(nombre)")
+          .eq("empresa_id", S.empresaId).gte("entrada", hoyISO() + "T00:00:00-03:00").order("entrada", { ascending: false }),
+      ]);
+      $("empMain").innerHTML = `
+        <div class="flex flex-wrap justify-between items-end gap-2 mb-5">
+          <div><h3 class="text-xl font-bold">Panel general</h3><p class="text-xs text-slate-400">Hoy, ${fFecha(new Date())} · se actualiza cada minuto</p></div>
+          <button class="btn btn-sm btn-sec" onclick="tabPanel()"><i class="fa-solid fa-rotate"></i>Actualizar</button>
+        </div>
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+          ${stat("Presentes ahora", `${r.presentes} <span class="text-sm text-slate-400 font-normal">de ${r.activos}</span>`, "fa-user-check", "emerald")}
+          ${stat("Horas trabajadas hoy", fMin(r.minutos), "fa-hourglass-half", "indigo")}
+          ${stat("Tardanzas", r.tardanzas, "fa-triangle-exclamation", "amber")}
+          ${stat("Ausentes", r.ausentes, "fa-user-xmark", "red")}
+        </div>
+        <div class="card overflow-x-auto">
+          <div class="px-4 py-3 border-b border-slate-700 font-semibold text-sm">Fichajes de hoy</div>
+          ${hoy?.length ? `<table class="tbl"><thead><tr><th>Colaborador</th><th>Oficina</th><th>Entrada</th><th>Salida</th><th>Tiempo</th><th>Estado</th></tr></thead><tbody>
+            ${hoy.map(x => `<tr><td><p class="font-medium">${esc(x.colaboradores?.nombre)}</p><p class="text-xs text-slate-400">${esc(x.colaboradores?.cargo)}</p></td>
+              <td>${esc(x.oficina?.nombre || "—")}</td><td>${fHora(x.entrada)}</td><td>${fHora(x.salida)}</td>
+              <td>${fMin((new Date(x.salida || Date.now()) - new Date(x.entrada)) / 60000)}</td><td>${estadoBadge(x)}</td></tr>`).join("")}
+          </tbody></table>` : `<p class="p-4 text-sm text-slate-400">Nadie fichó todavía hoy.</p>`}
+        </div>`;
+    } catch (e) { $("empMain").innerHTML = `<p class="text-red-400">${esc(errTxt(e))}</p>`; }
+  };
+  await cargar();
+  clearInterval(S._refresco); S._refresco = setInterval(cargar, 60000);
+}
+function estadoBadge(x) {
+  const t = x.tardanza_min > 0 ? `<span class="badge bg-amber-500/15 text-amber-300">Tarde ${x.tardanza_min} min</span> ` : "";
+  if (!x.salida) {
+    const viejo = Date.now() - new Date(x.entrada) > 16 * 3600e3;
+    return t + (viejo ? `<span class="badge bg-red-500/15 text-red-300">Sin salida</span>` : `<span class="badge bg-emerald-500/15 text-emerald-300">Trabajando</span>`);
+  }
+  return t + `<span class="badge bg-slate-600/40 text-slate-300">Completo</span>`;
+}
+
+// ---- Oficinas / QR ----
+async function tabOficinas() {
+  const { data: ofis, error } = await sb.from("oficinas").select("*").eq("empresa_id", S.empresaId).order("nombre");
+  if (error) return $("empMain").innerHTML = `<p class="text-red-400">${esc(error.message)}</p>`;
+  S.cache.oficinas = ofis;
+  const esSuper = S.perfil.rol === "superadmin";
+  $("empMain").innerHTML = `
+    <h3 class="text-xl font-bold mb-1">Oficinas y códigos QR</h3>
+    <p class="text-sm text-slate-400 mb-5">${esSuper ? "Las oficinas se crean y regeneran desde el panel de superadmin." : "Puntos de fichaje asignados por tu proveedor. Para sumar una oficina o regenerar un QR, contactalo."}</p>
+    <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+      ${ofis.length ? ofis.map(o => `
+        <div class="card p-5 text-center ${o.activa ? "" : "opacity-50"}">
+          <div class="qrbox inline-block" data-qr="${esc(linkQR(o.qr_token))}" data-size="170"></div>
+          <h4 class="font-bold mt-3">${esc(o.nombre)} ${o.activa ? "" : `<span class="badge bg-red-500/15 text-red-300">Desactivado</span>`}</h4>
+          <p class="text-xs text-slate-400">${esc(o.direccion) || "Sin dirección"}</p>
+          <div class="flex justify-center gap-2 mt-3">
+            <button class="btn btn-sm btn-sec" onclick="imprimirQR('${o.id}')"><i class="fa-solid fa-print"></i>Imprimir</button>
+            <button class="btn btn-sm btn-sec" onclick="navigator.clipboard.writeText('${esc(linkQR(o.qr_token))}').then(()=>toast('Link copiado'))"><i class="fa-solid fa-link"></i>Copiar link</button>
+          </div>
+        </div>`).join("") : `<p class="text-slate-400 text-sm">No hay oficinas asignadas todavía.</p>`}
+    </div>`;
+  pintarQRs();
+}
+
+// ---- Colaboradores ----
+async function tabColaboradores() {
+  const { data, error } = await sb.from("colaboradores").select("*").eq("empresa_id", S.empresaId).order("nombre");
+  if (error) return $("empMain").innerHTML = `<p class="text-red-400">${esc(error.message)}</p>`;
+  S.cache.colaboradores = data;
+  $("empMain").innerHTML = `
+    <div class="flex flex-wrap gap-3 justify-between items-center mb-4">
+      <h3 class="text-xl font-bold">Colaboradores <span class="text-sm text-slate-400 font-normal">(${data.filter(c => c.estado === "Activa").length} activos)</span></h3>
+      <div class="flex gap-2"><input id="colBuscar" class="inp !w-56" placeholder="Buscar nombre, DNI o cargo" oninput="pintarColaboradores()"><button class="btn btn-pri" onclick="abrirColaborador()"><i class="fa-solid fa-plus"></i>Nuevo</button></div>
+    </div>
+    <div class="card overflow-x-auto"><table class="tbl"><thead><tr><th>Nombre</th><th>DNI</th><th>Cargo</th><th>Estado</th><th></th></tr></thead><tbody id="colBody"></tbody></table></div>`;
+  pintarColaboradores();
+}
+function pintarColaboradores() {
+  const q = ($("colBuscar")?.value || "").toLowerCase().trim();
+  const lista = S.cache.colaboradores.filter(c => !q || [c.nombre, c.dni, c.cargo].some(v => String(v).toLowerCase().includes(q)));
+  $("colBody").innerHTML = lista.length ? lista.map(c => `
+    <tr class="${c.estado === "Activa" ? "" : "opacity-50"}"><td class="font-medium">${esc(c.nombre)}</td><td class="font-mono">${esc(c.dni)}</td><td>${esc(c.cargo)}</td>
+    <td>${c.estado === "Activa" ? `<span class="badge bg-emerald-500/15 text-emerald-300">Activa</span>` : `<span class="badge bg-slate-600/40 text-slate-300">Inactiva</span>`}</td>
+    <td class="text-right whitespace-nowrap"><button class="btn btn-sm btn-sec" onclick="abrirColaborador('${c.id}')"><i class="fa-solid fa-pen"></i></button>
+    <button class="btn btn-sm btn-sec" title="${c.estado === "Activa" ? "Desactivar" : "Activar"}" onclick="toggleColaborador('${c.id}')"><i class="fa-solid ${c.estado === "Activa" ? "fa-user-slash" : "fa-user-check"}"></i></button>
+    <button class="btn btn-sm btn-dan" onclick="borrarColaborador('${c.id}')"><i class="fa-solid fa-trash"></i></button></td></tr>`).join("")
+    : `<tr><td colspan="5" class="text-center text-slate-400 py-6">${q ? "Sin resultados." : "Todavía no cargaste colaboradores."}</td></tr>`;
+}
+function abrirColaborador(id) {
+  const c = id ? S.cache.colaboradores.find(x => x.id === id) : { nombre: "", dni: "", cargo: "", estado: "Activa" };
+  abrirModal(`
+    <h3 class="text-lg font-bold mb-4">${id ? "Editar colaborador" : "Nuevo colaborador"}</h3>
+    <div class="space-y-3">
+      <div><label class="lbl">Nombre y apellido</label><input id="cNom" class="inp" value="${esc(c.nombre)}"></div>
+      <div><label class="lbl">DNI (con el que ficha)</label><input id="cDni" class="inp font-mono" inputmode="numeric" value="${esc(c.dni)}"></div>
+      <div><label class="lbl">Cargo</label><input id="cCar" class="inp" value="${esc(c.cargo)}"></div>
+      <div><label class="lbl">Estado</label><select id="cEst" class="inp"><option ${c.estado === "Activa" ? "selected" : ""}>Activa</option><option ${c.estado === "Inactiva" ? "selected" : ""}>Inactiva</option></select></div>
+      <p id="cErr" class="text-red-400 text-sm min-h-[1.25rem]"></p>
+      <div class="flex justify-end gap-2"><button class="btn btn-sec" onclick="cerrarModal()">Cancelar</button><button class="btn btn-pri" onclick="guardarColaborador('${id || ""}')">Guardar</button></div>
+    </div>`);
+}
+async function guardarColaborador(id) {
+  const fila = { nombre: $("cNom").value.trim(), dni: $("cDni").value.replace(/\D/g, ""), cargo: $("cCar").value.trim(), estado: $("cEst").value };
+  if (!fila.nombre) return $("cErr").textContent = "Falta el nombre.";
+  if (!/^\d{6,9}$/.test(fila.dni)) return $("cErr").textContent = "El DNI debe tener entre 6 y 9 números.";
+  const { error } = id ? await sb.from("colaboradores").update(fila).eq("id", id) : await sb.from("colaboradores").insert({ ...fila, empresa_id: S.empresaId });
+  if (error) return $("cErr").textContent = errTxt(error);
+  cerrarModal(); toast("Colaborador guardado"); tabColaboradores();
+}
+async function toggleColaborador(id) {
+  const c = S.cache.colaboradores.find(x => x.id === id);
+  const { error } = await sb.from("colaboradores").update({ estado: c.estado === "Activa" ? "Inactiva" : "Activa" }).eq("id", id);
+  if (error) return toast(errTxt(error), "error");
+  tabColaboradores();
+}
+async function borrarColaborador(id) {
+  if (!confirm("¿Eliminar el colaborador? Si ya fichó alguna vez, conviene desactivarlo para conservar su historial.")) return;
+  const { error } = await sb.from("colaboradores").delete().eq("id", id);
+  if (error) return toast(errTxt(error), "error");
+  toast("Colaborador eliminado"); tabColaboradores();
+}
+
+// ---- Registros ----
+async function tabRegistros() {
+  if (!S.cache.colaboradores) { const { data } = await sb.from("colaboradores").select("*").eq("empresa_id", S.empresaId).order("nombre"); S.cache.colaboradores = data || []; }
+  const f = S.filtroReg || (S.filtroReg = { desde: sumarDias(hoyISO(), -6), hasta: hoyISO(), col: "" });
+  $("empMain").innerHTML = `
+    <div class="flex flex-wrap gap-3 justify-between items-end mb-4">
+      <h3 class="text-xl font-bold">Registros de fichaje</h3>
+      <div class="flex flex-wrap gap-2 items-end">
+        <div><label class="lbl">Desde</label><input type="date" id="rDesde" class="inp" value="${f.desde}"></div>
+        <div><label class="lbl">Hasta</label><input type="date" id="rHasta" class="inp" value="${f.hasta}"></div>
+        <div><label class="lbl">Colaborador</label><select id="rCol" class="inp"><option value="">Todos</option>${S.cache.colaboradores.map(c => `<option value="${c.id}" ${f.col === c.id ? "selected" : ""}>${esc(c.nombre)}</option>`).join("")}</select></div>
+        <button class="btn btn-pri" onclick="buscarRegistros()"><i class="fa-solid fa-magnifying-glass"></i>Ver</button>
+        <button class="btn btn-sec" onclick="exportarRegistros()"><i class="fa-solid fa-file-csv"></i>Exportar</button>
+      </div>
+    </div>
+    <div id="regRes">${cargando()}</div>`;
+  buscarRegistros();
+}
+async function buscarRegistros() {
+  const f = S.filtroReg = { desde: $("rDesde").value, hasta: $("rHasta").value, col: $("rCol").value };
+  if (!f.desde || !f.hasta || f.desde > f.hasta) return toast("Revisá las fechas", "error");
+  let q = sb.from("registros").select("id, entrada, salida, tardanza_min, colaborador_id, colaboradores(nombre, dni), oficina:oficinas!registros_oficina_id_fkey(nombre), oficina_salida:oficinas!registros_oficina_salida_id_fkey(nombre)")
+    .eq("empresa_id", S.empresaId).gte("entrada", f.desde + "T00:00:00-03:00").lt("entrada", sumarDias(f.hasta, 1) + "T00:00:00-03:00")
+    .order("entrada", { ascending: false }).limit(2000);
+  if (f.col) q = q.eq("colaborador_id", f.col);
+  const { data, error } = await q;
+  if (error) return $("regRes").innerHTML = `<p class="text-red-400">${esc(error.message)}</p>`;
+  S.cache.registros = data;
+  const totMin = data.reduce((s, x) => s + (x.salida ? (new Date(x.salida) - new Date(x.entrada)) / 60000 : 0), 0);
+  $("regRes").innerHTML = `
+    <p class="text-sm text-slate-400 mb-3">${data.length} fichaje(s) · ${fMin(totMin)} trabajadas (jornadas cerradas) · ${data.filter(x => x.tardanza_min > 0).length} tardanza(s)${data.length === 2000 ? " · <span class='text-amber-300'>se muestran los primeros 2000, acotá las fechas</span>" : ""}</p>
+    <div class="card overflow-x-auto"><table class="tbl"><thead><tr><th>Fecha</th><th>Colaborador</th><th>DNI</th><th>Oficina</th><th>Entrada</th><th>Salida</th><th>Tiempo</th><th>Estado</th><th></th></tr></thead><tbody>
+      ${data.length ? data.map(x => `<tr><td>${fFecha(x.entrada)}</td><td class="font-medium">${esc(x.colaboradores?.nombre)}</td><td class="font-mono text-xs">${esc(x.colaboradores?.dni)}</td>
+        <td>${esc(x.oficina?.nombre || "—")}${x.oficina_salida && x.oficina_salida.nombre !== x.oficina?.nombre ? `<p class="text-xs text-slate-400">Salida: ${esc(x.oficina_salida.nombre)}</p>` : ""}</td>
+        <td>${fHora(x.entrada)}</td><td>${x.salida ? (fFecha(x.salida) !== fFecha(x.entrada) ? fFecha(x.salida) + " " : "") + fHora(x.salida) : "—"}</td>
+        <td>${x.salida ? fMin((new Date(x.salida) - new Date(x.entrada)) / 60000) : "—"}</td><td>${estadoBadge(x)}</td>
+        <td><button class="btn btn-sm btn-sec" title="Corregir" onclick="abrirCorreccion(${x.id})"><i class="fa-solid fa-pen"></i></button></td></tr>`).join("")
+      : `<tr><td colspan="9" class="text-center text-slate-400 py-6">Sin fichajes en ese período.</td></tr>`}
+    </tbody></table></div>`;
+}
+const aLocalInput = ts => ts ? new Date(new Date(ts).getTime() - 3 * 3600e3).toISOString().slice(0, 16) : "";
+function abrirCorreccion(id) {
+  const x = S.cache.registros.find(r => r.id === id);
+  abrirModal(`
+    <h3 class="text-lg font-bold mb-1">Corregir fichaje</h3>
+    <p class="text-sm text-slate-400 mb-4">${esc(x.colaboradores?.nombre)} · ${fFecha(x.entrada)}</p>
+    <div class="space-y-3">
+      <div><label class="lbl">Entrada</label><input type="datetime-local" id="coEnt" class="inp" value="${aLocalInput(x.entrada)}"></div>
+      <div><label class="lbl">Salida</label><input type="datetime-local" id="coSal" class="inp" value="${aLocalInput(x.salida)}"></div>
+      <div><label class="lbl">Tardanza (minutos)</label><input type="number" min="0" id="coTar" class="inp" value="${x.tardanza_min}"></div>
+      <p class="text-xs text-slate-400">Horario de Argentina (UTC-3). Dejá la salida vacía si la jornada sigue abierta.</p>
+      <div class="flex justify-end gap-2"><button class="btn btn-sec" onclick="cerrarModal()">Cancelar</button><button class="btn btn-pri" onclick="guardarCorreccion(${id})">Guardar</button></div>
+    </div>`);
+}
+async function guardarCorreccion(id) {
+  const ent = $("coEnt").value, sal = $("coSal").value;
+  if (!ent) return toast("Falta la entrada", "error");
+  if (sal && sal < ent) return toast("La salida no puede ser anterior a la entrada", "error");
+  const { error } = await sb.from("registros").update({ entrada: ent + ":00-03:00", salida: sal ? sal + ":00-03:00" : null, tardanza_min: Math.max(0, +$("coTar").value || 0) }).eq("id", id);
+  if (error) return toast(errTxt(error), "error");
+  cerrarModal(); toast("Fichaje corregido"); buscarRegistros();
+}
+function exportarRegistros() {
+  const d = S.cache.registros || [];
+  if (!d.length) return toast("No hay registros para exportar", "error");
+  const filas = [["Fecha", "Colaborador", "DNI", "Oficina", "Entrada", "Salida", "Minutos trabajados", "Tardanza (min)"]].concat(
+    d.slice().reverse().map(x => [fFecha(x.entrada), x.colaboradores?.nombre, x.colaboradores?.dni, x.oficina?.nombre || "", fHora(x.entrada), x.salida ? fHora(x.salida) : "",
+      x.salida ? Math.round((new Date(x.salida) - new Date(x.entrada)) / 60000) : "", x.tardanza_min]));
+  const csv = "﻿" + filas.map(r => r.map(v => `"${String(v ?? "").replace(/"/g, '""')}"`).join(";")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  a.download = `fichajes_${S.empresa.nombre.replace(/\W+/g, "_")}_${S.filtroReg.desde}_${S.filtroReg.hasta}.csv`;
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+// ---- Horario ----
+function tabAjustes() {
+  const e = S.empresa;
+  $("empMain").innerHTML = `
+    <div class="card p-6 max-w-lg">
+      <h3 class="text-lg font-bold mb-1">Horario de entrada</h3>
+      <p class="text-sm text-slate-400 mb-4">Se usa para marcar tardanzas en la primera entrada de cada día.</p>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="lbl">Hora de entrada</label><input type="time" id="ajHora" class="inp" value="${e.hora_entrada.slice(0,5)}"></div>
+        <div><label class="lbl">Tolerancia (min)</label><input type="number" id="ajTol" min="0" max="240" class="inp" value="${e.tolerancia_min}"></div>
+      </div>
+      <button class="btn btn-pri mt-4" onclick="guardarHorario()">Guardar</button>
+    </div>`;
+}
+async function guardarHorario() {
+  const h = $("ajHora").value, t = +$("ajTol").value;
+  try {
+    await rpc("rl_guardar_horario", { p_empresa: S.empresaId, p_hora: h, p_tolerancia: t });
+    S.empresa.hora_entrada = h + ":00"; S.empresa.tolerancia_min = t; toast("Horario guardado");
+  } catch (e) { toast(errTxt(e), "error"); }
+}
+
+// ================== FICHAJE POR QR (empleado, sin login) ==================
+async function renderFichaje() {
+  $("app").innerHTML = cargando("Verificando código…");
+  let info = null;
+  try { info = await rpc("rl_fichaje_info", { p_token: qrParam }); } catch {}
+  if (!info) {
+    $("app").innerHTML = `<div class="flex-grow flex items-center justify-center p-6 text-center"><div class="card p-8 max-w-sm">
+      <div class="text-4xl mb-3">⚠️</div><h2 class="text-lg font-bold">Código QR no válido</h2>
+      <p class="text-sm text-slate-400 mt-2">Este código está desactivado o fue reemplazado. Avisale a tu encargado.</p></div></div>`;
+    return;
+  }
+  $("app").innerHTML = `
+  <div class="flex-grow flex flex-col items-center justify-center p-4 bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950">
+    <div class="w-full max-w-sm">
+      <div class="text-center mb-6">
+        <p class="text-xs uppercase tracking-wider text-indigo-300 font-semibold">${esc(info.empresa)}</p>
+        <h1 class="text-xl font-bold">${esc(info.oficina)}</h1>
+        ${info.direccion ? `<p class="text-xs text-slate-400">${esc(info.direccion)}</p>` : ""}
+        <p id="reloj" class="text-5xl font-bold tabular-nums mt-4">--:--</p>
+        <p id="relojFecha" class="text-sm text-slate-400"></p>
+      </div>
+      <div id="fichajeCuerpo" class="card p-6">
+        <label class="lbl" for="dniInput">Tu DNI</label>
+        <input id="dniInput" class="inp text-center text-2xl font-mono tracking-widest" inputmode="numeric" autocomplete="off" maxlength="10" placeholder="12345678"
+          oninput="this.value=this.value.replace(/\\D/g,'')" onkeydown="if(event.key==='Enter')fichar('entrada')">
+        <p id="fichErr" class="text-red-400 text-sm text-center min-h-[1.25rem] mt-2"></p>
+        <div class="grid grid-cols-2 gap-3 mt-2">
+          <button id="btnEnt" onclick="fichar('entrada')" class="btn py-4 text-base bg-emerald-600 hover:bg-emerald-500 text-white"><i class="fa-solid fa-right-to-bracket"></i>Entrada</button>
+          <button id="btnSal" onclick="fichar('salida')" class="btn py-4 text-base bg-rose-600 hover:bg-rose-500 text-white"><i class="fa-solid fa-right-from-bracket"></i>Salida</button>
+        </div>
+      </div>
+      <p class="text-center text-xs text-slate-500 mt-4">RelojLaboral Pro</p>
+    </div>
+  </div>`;
+  const tick = () => {
+    const d = new Date();
+    if (!$("reloj")) return;
+    $("reloj").textContent = d.toLocaleTimeString("es-AR", { timeZone: ZONA, hour: "2-digit", minute: "2-digit", hour12: false });
+    $("relojFecha").textContent = d.toLocaleDateString("es-AR", { timeZone: ZONA, weekday: "long", day: "numeric", month: "long" });
+  };
+  tick(); clearInterval(S._reloj); S._reloj = setInterval(tick, 1000);
+  $("dniInput").focus();
+}
+async function fichar(tipo) {
+  const dni = $("dniInput").value.replace(/\D/g, "");
+  $("fichErr").textContent = "";
+  if (dni.length < 6) { $("fichErr").textContent = "Ingresá tu DNI completo."; return; }
+  $("btnEnt").disabled = $("btnSal").disabled = true;
+  let r;
+  try { r = await rpc("rl_fichar", { p_token: qrParam, p_dni: dni, p_tipo: tipo }); }
+  catch { r = { ok: false, error: "Sin conexión. Probá de nuevo." }; }
+  if (!r.ok) {
+    $("fichErr").textContent = r.error;
+    $("btnEnt").disabled = $("btnSal").disabled = false;
+    return;
+  }
+  const ent = r.tipo === "entrada";
+  $("fichajeCuerpo").innerHTML = `
+    <div class="text-center py-2">
+      <div class="w-16 h-16 mx-auto rounded-full flex items-center justify-center text-3xl ${ent ? "bg-emerald-500/20 text-emerald-300" : "bg-rose-500/20 text-rose-300"}"><i class="fa-solid fa-check"></i></div>
+      <p class="text-sm text-slate-400 mt-3">${ent ? "Entrada registrada" : "Salida registrada"}</p>
+      <h2 class="text-xl font-bold">${esc(r.nombre)}</h2>
+      <p class="text-4xl font-bold tabular-nums my-2">${esc(r.hora)}</p>
+      ${ent && r.tardanza_min > 0 ? `<p class="badge bg-amber-500/15 text-amber-300">Llegada tarde: ${r.tardanza_min} min</p>` : ""}
+      ${!ent ? `<p class="text-sm text-slate-300">Jornada: ${fMin(r.minutos)}</p>` : ""}
+      <button class="btn btn-sec mt-5 w-full" onclick="renderFichaje()">Listo</button>
+    </div>`;
+  setTimeout(() => { if (document.body.contains($("fichajeCuerpo")) && !$("dniInput")) renderFichaje(); }, 8000);
+}
+
+// Sesión vencida o cerrada en otra pestaña
+sb.auth.onAuthStateChange((ev) => { if (ev === "SIGNED_OUT" && S.user && !qrParam) { S.user = null; renderLogin("Tu sesión terminó. Volvé a entrar."); } });
+
+init();
+</script>
+</body>
+</html>
