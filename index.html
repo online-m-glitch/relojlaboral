@@ -1430,6 +1430,7 @@ async function renderFichaje() {
           oninput="this.value=this.value.replace(/\\D/g,'')" onkeydown="if(event.key==='Enter')fichar('entrada')">
         <p id="fichEstado" class="text-indigo-300 text-sm text-center mt-2 hidden"></p>
         <p id="fichErr" class="text-red-400 text-sm text-center min-h-[1.25rem] mt-2"></p>
+        <div id="geoAyuda"></div>
         <div class="grid grid-cols-2 gap-3 mt-2">
           <button id="btnEnt" onclick="fichar('entrada')" class="btn py-4 text-base bg-emerald-600 hover:bg-emerald-500 text-white"><i class="fa-solid fa-right-to-bracket"></i>Entrada</button>
           <button id="btnSal" onclick="fichar('salida')" class="btn py-4 text-base bg-rose-600 hover:bg-rose-500 text-white"><i class="fa-solid fa-right-from-bracket"></i>Salida</button>
@@ -1439,7 +1440,7 @@ async function renderFichaje() {
           <button id="btnReg" onclick="fichar('regreso')" class="btn py-2.5 btn-sec"><i class="fa-solid fa-person-walking-arrow-loop-left"></i>Regreso</button>
         </div>` : ""}
       </div>
-      ${info.geo ? `<p class="text-center text-xs text-slate-400 mt-4">📍 Para fichar tenés que estar en el lugar: te vamos a pedir la ubicación del celular.</p>` : ""}
+      ${info.geo ? `<p id="geoNota" class="text-center text-xs text-slate-400 mt-4">📍 Para fichar tenés que estar en el lugar. Cuando el celular te pregunte por la ubicación, tocá <b>Permitir</b>.</p>` : ""}
       <p class="text-center text-xs text-slate-500 mt-2">RelojLaboral Pro</p>
     </div>
   </div>`;
@@ -1451,6 +1452,61 @@ async function renderFichaje() {
   };
   tick(); clearInterval(S._reloj); S._reloj = setInterval(tick, 1000);
   $("dniInput").focus();
+  if (info.geo) revisarPermisoUbicacion();
+}
+// ---- Ayuda cuando la ubicación está bloqueada o apagada ----
+function plataforma() {
+  const ua = navigator.userAgent || "";
+  if (/FBAN|FBAV|Instagram|Line\/|; wv\)|WhatsApp/i.test(ua)) return "app";
+  if (/iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return /CriOS/i.test(ua) ? "ios-chrome" : "ios";
+  if (/Android/i.test(ua)) return "android";
+  return "otro";
+}
+function pasosUbicacion(motivo) {
+  const pl = plataforma();
+  if (pl === "app") return [
+    "Este link se abrió dentro de otra aplicación, que no deja usar la ubicación.",
+    "Tocá el menú (⋮ o ···) y elegí <b>Abrir en el navegador</b> (Chrome o Safari).",
+    "O escaneá el QR directamente con la <b>cámara</b> del celular."];
+  if (motivo === "apagado") return pl.startsWith("ios") ? [
+    "Abrí <b>Ajustes</b> del iPhone → <b>Privacidad y seguridad</b> → <b>Localización</b> y activala.",
+    pl === "ios" ? "Ahí mismo, en <b>Sitios web de Safari</b>, elegí <b>Mientras se usa la app</b>." : "Ahí mismo, en <b>Chrome</b>, elegí <b>Mientras se usa la app</b>.",
+    "Volvé acá y tocá <b>Ya lo activé, reintentar</b>."] : [
+    "Deslizá hacia abajo la barra de notificaciones y activá <b>Ubicación</b> (GPS).",
+    "Volvé acá y tocá <b>Ya lo activé, reintentar</b>."];
+  if (pl === "ios") return [
+    "Tocá <b>aA</b> (a la izquierda de la dirección, arriba o abajo de la pantalla) → <b>Configuración del sitio web</b> → <b>Ubicación</b> → <b>Permitir</b>.",
+    "Si no aparece: <b>Ajustes</b> del iPhone → <b>Privacidad y seguridad</b> → <b>Localización</b> → <b>Sitios web de Safari</b> → <b>Mientras se usa la app</b>.",
+    "Volvé acá y tocá <b>Ya lo activé, reintentar</b>."];
+  if (pl === "ios-chrome") return [
+    "Abrí <b>Ajustes</b> del iPhone → <b>Chrome</b> → <b>Ubicación</b> → <b>Mientras se usa la app</b>.",
+    "Volvé acá y tocá <b>Ya lo activé, reintentar</b>."];
+  if (pl === "android") return [
+    "Tocá el ícono que está a la izquierda de la dirección (🔒 o ⚙) → <b>Permisos</b> → <b>Ubicación</b> → <b>Permitir</b>. Si ves <b>Restablecer permisos</b>, tocalo.",
+    "Revisá que la <b>Ubicación</b> del celular esté activada (barra de notificaciones).",
+    "Volvé acá y tocá <b>Ya lo activé, reintentar</b>."];
+  return ["Habilitá el permiso de <b>ubicación</b> para este sitio en la configuración del navegador.", "Tocá <b>Ya lo activé, reintentar</b>."];
+}
+function mostrarAyudaUbicacion(motivo) {
+  const box = $("geoAyuda"); if (!box) return;
+  const titulo = plataforma() === "app" ? "Abrí el link en el navegador" : motivo === "apagado" ? "Activá la ubicación del celular" : "La ubicación está bloqueada para esta página";
+  box.innerHTML = `<div class="rounded-xl bg-amber-500/10 border border-amber-500/30 p-4 text-left mt-1 mb-2">
+    <p class="font-semibold text-sm text-amber-200"><i class="fa-solid fa-location-dot mr-1"></i>${titulo}</p>
+    <p class="text-xs text-slate-300 mt-1">Para fichar necesitamos saber que estás en el lugar. No guardamos tu ubicación, solo la distancia a la oficina.</p>
+    <ol class="list-decimal pl-5 mt-2 space-y-1.5 text-xs text-slate-300">${pasosUbicacion(motivo).map(x => `<li>${x}</li>`).join("")}</ol>
+    <button class="btn btn-pri w-full mt-3" onclick="reintentarUbicacion()"><i class="fa-solid fa-rotate-right"></i>Ya lo activé, reintentar</button>
+  </div>`;
+  const nota = $("geoNota"); if (nota) nota.classList.add("hidden");
+}
+function reintentarUbicacion() { location.reload(); }
+async function revisarPermisoUbicacion() {
+  if (plataforma() === "app") return mostrarAyudaUbicacion("denegado");
+  try {
+    if (!navigator.permissions?.query) return;
+    const st = await navigator.permissions.query({ name: "geolocation" });
+    if (st.state === "denied") mostrarAyudaUbicacion("denegado");
+    st.onchange = () => { if (st.state !== "denied" && $("geoAyuda")) { $("geoAyuda").innerHTML = ""; $("geoNota")?.classList.remove("hidden"); } };
+  } catch {}
 }
 // Identificador de este celular (se crea una vez y queda guardado en el navegador)
 function idDispositivo() {
@@ -1469,9 +1525,9 @@ function obtenerUbicacion() {
     if (!navigator.geolocation) return res({ error: "Este celular no permite obtener la ubicación." });
     navigator.geolocation.getCurrentPosition(
       p => res({ lat: p.coords.latitude, lng: p.coords.longitude, precision: p.coords.accuracy }),
-      e => res({ error: e.code === 1
-        ? "Necesitamos tu ubicación para fichar. Permití el acceso a la ubicación (en el navegador, tocá el candado o el ícono de ajustes junto a la dirección) y probá de nuevo."
-        : e.code === 3 ? "No se pudo obtener la ubicación a tiempo. Activá el GPS y probá de nuevo." : "No se pudo obtener la ubicación. Activá el GPS y probá de nuevo." }),
+      e => res({ codigo: e.code, error: e.code === 1
+        ? "No se pudo fichar: la ubicación está bloqueada. Seguí estos pasos para activarla."
+        : e.code === 3 ? "No se pudo obtener la ubicación a tiempo. Acercate a una ventana o salí al aire libre y probá de nuevo." : "No se pudo obtener la ubicación. Revisá que esté activada en el celular." }),
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 20000 });
   });
 }
@@ -1487,7 +1543,11 @@ async function fichar(tipo) {
   if (S.infoFichaje?.geo) {
     estadoFichaje("📍 Obteniendo tu ubicación…");
     pos = await obtenerUbicacion();
-    if (pos.error) return reactivar(pos.error);
+    if (pos.error) {
+      if (pos.codigo === 1) mostrarAyudaUbicacion("denegado");
+      else if (pos.codigo === 2) mostrarAyudaUbicacion("apagado");
+      return reactivar(pos.error);
+    }
   }
   estadoFichaje("Registrando…");
   let r;
