@@ -109,6 +109,14 @@ const fHora = ts => ts ? new Date(ts).toLocaleTimeString("es-AR", { timeZone: ZO
 // ---- Planes: Standard / Full / Prueba de 14 días ----
 const esFullEmp = e => !!e && (e.plan === "full" || (e.plan === "demo" && e.demo_hasta >= hoyISO()));
 const esFull = () => esFullEmp(S.empresa);
+// ---- Permisos: admin (o superadmin) = todo; encargado = lo que eligió el admin ----
+const SECCIONES = [["panel", "Panel"], ["oficinas", "Oficinas / QR"], ["colaboradores", "Colaboradores"], ["registros", "Registros"],
+  ["licencias", "Licencias", true], ["feriados", "Feriados", true], ["reportes", "Reportes", true], ["configuracion", "Configuración"]];
+const esAdmin = () => S.perfil?.rol === "superadmin" || S.perfil?.cargo !== "encargado";
+const perm = sec => esAdmin() ? "editar" : ((S.perfil?.permisos || {})[sec] || "no");
+const puedeVer = sec => perm(sec) !== "no";
+const puedeEditar = sec => perm(sec) === "editar";
+const oficinasLimitadas = () => !esAdmin() && Array.isArray(S.perfil?.oficinas_permitidas);
 const diasRestantes = e => Math.round((new Date(e.demo_hasta + "T12:00:00Z") - new Date(hoyISO() + "T12:00:00Z")) / 864e5);
 function planBadge(e) {
   if (e.plan === "full") return `<span class="badge bg-indigo-500/20 text-indigo-200">Full</span>`;
@@ -642,7 +650,7 @@ async function abrirUsuarios(empresaId) {
     $("usrLista").innerHTML = `
       <div class="space-y-2 mb-4">${usuarios.length ? usuarios.map(u => `
         <div class="bg-slate-900/60 rounded-xl p-3 flex flex-wrap gap-2 justify-between items-center">
-          <div class="min-w-0"><p class="text-sm font-medium truncate">${esc(u.email)}</p>
+          <div class="min-w-0"><p class="text-sm font-medium truncate">${esc(u.email)} ${u.cargo === "encargado" ? `<span class="badge bg-indigo-500/15 text-indigo-200">Encargado</span>` : `<span class="badge bg-emerald-500/15 text-emerald-300">Admin</span>`}</p>
           <p class="text-xs text-slate-400">${esc(u.nombre || "")} ${u.clave_temporal ? `<span class="badge bg-amber-500/15 text-amber-300">Clave temporal</span>` : ""} · Último ingreso: ${u.ultimo_ingreso ? fFecha(u.ultimo_ingreso) + " " + fHora(u.ultimo_ingreso) : "nunca"}</p></div>
           <div class="flex gap-1"><button class="btn btn-sm btn-sec" onclick="resetClave('${u.user_id}','${esc(u.email)}')">Nueva clave</button>
           <button class="btn btn-sm btn-dan" onclick="borrarUsuario('${u.user_id}','${empresaId}')"><i class="fa-solid fa-trash"></i></button></div>
@@ -735,18 +743,22 @@ async function guardarBaseUrl() {
 }
 
 // ================== PANEL DE EMPRESA ==================
+// [clave, título, ícono, es Full, sección de permiso ("admin" = solo administradores)]
 const TABS = [
-  ["panel", "Panel", "fa-chart-line"],
-  ["oficinas", "Oficinas / QR", "fa-qrcode"],
-  ["colaboradores", "Colaboradores", "fa-users"],
-  ["registros", "Registros", "fa-list-check"],
-  ["ausencias", "Licencias", "fa-umbrella-beach", true],
-  ["feriados", "Feriados", "fa-calendar-xmark", true],
-  ["ajustes", "Configuración", "fa-gear"],
+  ["panel", "Panel", "fa-chart-line", false, "panel"],
+  ["oficinas", "Oficinas / QR", "fa-qrcode", false, "oficinas"],
+  ["colaboradores", "Colaboradores", "fa-users", false, "colaboradores"],
+  ["registros", "Registros", "fa-list-check", false, "registros"],
+  ["ausencias", "Licencias", "fa-umbrella-beach", true, "licencias"],
+  ["feriados", "Feriados", "fa-calendar-xmark", true, "feriados"],
+  ["encargados", "Encargados", "fa-user-shield", false, "admin"],
+  ["ajustes", "Configuración", "fa-gear", false, "configuracion"],
 ];
+const tabsVisibles = () => TABS.filter(t => t[4] === "admin" ? esAdmin() : puedeVer(t[4]));
 function irTab(k) {
-  const t = TABS.find(x => x[0] === k);
-  if (t && t[3] && !esFull()) return upsell(t[1]);
+  const t = tabsVisibles().find(x => x[0] === k);
+  if (!t) return;
+  if (t[3] && !esFull()) return upsell(t[1]);
   S.tab = k; renderEmpresa();
 }
 function renderEmpresa() {
@@ -757,10 +769,10 @@ function renderEmpresa() {
       ${esSuper ? `<button onclick="salirEmpresa()" class="btn btn-sm btn-sec mb-3 w-full"><i class="fa-solid fa-arrow-left"></i>Volver a superadmin</button>` : ""}
       <div class="flex items-center gap-3 mb-5">
         <div class="w-10 h-10 rounded-xl bg-indigo-600/20 text-indigo-300 flex items-center justify-center"><i class="fa-solid fa-building"></i></div>
-        <div class="min-w-0"><h3 class="font-bold text-sm text-white truncate">${esc(S.empresa.nombre)}</h3><p class="text-xs text-slate-400 truncate">${esc(S.user.email)}</p></div>
+        <div class="min-w-0"><h3 class="font-bold text-sm text-white truncate">${esc(S.empresa.nombre)}</h3><p class="text-xs text-slate-400 truncate">${esc(S.user.email)}</p>${esAdmin() ? "" : `<span class="badge bg-indigo-500/15 text-indigo-200 mt-1">Encargado</span>`}</div>
       </div>
       <nav class="flex md:flex-col gap-1 overflow-x-auto">
-        ${TABS.map(([k, t, ic, full]) => `<button class="nav-item ${S.tab === k ? "act" : ""} shrink-0" onclick="irTab('${k}')"><i class="fa-solid ${ic} w-4"></i>${t}${full && !esFull() ? `<i class="fa-solid fa-lock text-[10px] text-slate-500 ml-auto"></i>` : ""}</button>`).join("")}
+        ${tabsVisibles().map(([k, t, ic, full]) => `<button class="nav-item ${S.tab === k ? "act" : ""} shrink-0" onclick="irTab('${k}')"><i class="fa-solid ${ic} w-4"></i>${t}${full && !esFull() ? `<i class="fa-solid fa-lock text-[10px] text-slate-500 ml-auto"></i>` : ""}</button>`).join("")}
       </nav>
       <div class="mt-4 text-xs">${S.empresa.plan === "demo"
         ? `<div class="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 text-amber-200"><b>Prueba Full</b><br>${diasRestantes(S.empresa) <= 0 ? "Vence hoy" : `Te quedan ${diasRestantes(S.empresa)} día${diasRestantes(S.empresa) === 1 ? "" : "s"}`} (hasta el ${fFecha(S.empresa.demo_hasta + "T12:00:00")}).</div>`
@@ -778,8 +790,11 @@ function renderEmpresa() {
     <main id="empMain" class="flex-grow p-4 md:p-6 bg-slate-900 min-w-0">${cargando()}</main>
   </div>`;
   clearInterval(S._refresco);
-  if (TABS.find(x => x[0] === S.tab)?.[3] && !esFull()) S.tab = "panel";
-  ({ panel: tabPanel, oficinas: tabOficinas, colaboradores: tabColaboradores, registros: tabRegistros, ausencias: tabAusencias, feriados: tabFeriados, ajustes: tabAjustes })[S.tab]();
+  const vis = tabsVisibles().filter(t => !(t[3] && !esFull()));
+  if (!vis.length) { $("empMain").innerHTML = `<div class="card p-8 max-w-md mx-auto text-center mt-10"><i class="fa-solid fa-lock text-3xl text-slate-400"></i>
+    <h3 class="text-lg font-bold mt-3">Todavía no tenés secciones habilitadas</h3><p class="text-sm text-slate-400 mt-2">Pedile al administrador de tu empresa que te dé acceso.</p></div>`; return; }
+  if (!vis.some(t => t[0] === S.tab)) S.tab = vis[0][0];
+  ({ encargados: tabEncargados, panel: tabPanel, oficinas: tabOficinas, colaboradores: tabColaboradores, registros: tabRegistros, ausencias: tabAusencias, feriados: tabFeriados, ajustes: tabAjustes })[S.tab]();
 }
 
 // ---- Panel ----
@@ -869,7 +884,7 @@ async function tabOficinas() {
           <p class="text-xs text-slate-400">${esc(o.direccion) || "Sin dirección"}</p>
           <div class="mt-2">${badgeGeo(o)}</div>
           <div class="flex flex-wrap justify-center gap-2 mt-3">
-            <button class="btn btn-sm btn-sec" onclick="abrirUbicacion('${o.id}')"><i class="fa-solid fa-location-dot"></i>Ubicación</button>
+            ${puedeEditar("oficinas") ? `<button class="btn btn-sm btn-sec" onclick="abrirUbicacion('${o.id}')"><i class="fa-solid fa-location-dot"></i>Ubicación</button>` : ""}
             <button class="btn btn-sm btn-sec" onclick="imprimirQR('${o.id}')"><i class="fa-solid fa-print"></i>Imprimir</button>
             <button class="btn btn-sm btn-sec" onclick="navigator.clipboard.writeText('${esc(linkQR(o.qr_token))}').then(()=>toast('Link copiado'))"><i class="fa-solid fa-link"></i>Copiar link</button>
           </div>
@@ -891,7 +906,7 @@ async function tabColaboradores() {
   $("empMain").innerHTML = `
     <div class="flex flex-wrap gap-3 justify-between items-center mb-4">
       <h3 class="text-xl font-bold">Colaboradores <span class="text-sm text-slate-400 font-normal">(${data.filter(c => c.estado === "Activa").length} activos)</span></h3>
-      <div class="flex gap-2"><input id="colBuscar" class="inp !w-56" placeholder="Buscar nombre, DNI o cargo" oninput="pintarColaboradores()"><button class="btn btn-pri" onclick="abrirColaborador()"><i class="fa-solid fa-plus"></i>Nuevo</button></div>
+      <div class="flex gap-2"><input id="colBuscar" class="inp !w-56" placeholder="Buscar nombre, DNI o cargo" oninput="pintarColaboradores()">${puedeEditar("colaboradores") ? `<button class="btn btn-pri" onclick="abrirColaborador()"><i class="fa-solid fa-plus"></i>Nuevo</button>` : ""}</div>
     </div>
     <div class="card overflow-x-auto"><table class="tbl"><thead><tr><th>Nombre</th><th>DNI</th><th>Cargo</th><th>Horario</th><th>Días</th><th>Celular</th><th>Remoto</th><th>Estado</th><th></th></tr></thead><tbody id="colBody"></tbody></table></div>`;
   pintarColaboradores();
@@ -900,14 +915,14 @@ function pintarColaboradores() {
   const q = ($("colBuscar")?.value || "").toLowerCase().trim();
   const lista = S.cache.colaboradores.filter(c => !q || [c.nombre, c.dni, c.cargo].some(v => String(v).toLowerCase().includes(q)));
   $("colBody").innerHTML = lista.length ? lista.map(c => `
-    <tr class="${c.estado === "Activa" ? "" : "opacity-50"}"><td class="font-medium">${esc(c.nombre)}</td><td class="font-mono">${esc(c.dni)}</td><td>${esc(c.cargo)}</td>
+    <tr class="${c.estado === "Activa" ? "" : "opacity-50"}"><td class="font-medium">${esc(c.nombre)}${c.oficina_id ? `<p class="text-xs text-slate-400 font-normal"><i class="fa-solid fa-location-dot mr-1"></i>${esc((S.cache.oficinasEmp || []).find(o => o.id === c.oficina_id)?.nombre || "")}</p>` : ""}</td><td class="font-mono">${esc(c.dni)}</td><td>${esc(c.cargo)}</td>
     <td class="whitespace-nowrap">${fHorario(c)}${Object.keys(c.horario_dias || {}).length ? `<p class="text-xs text-indigo-300">${Object.entries(c.horario_dias).sort().map(([d, h]) => `${DIAS[d - 1][1]} ${h.e}–${h.s}`).join(" · ")}</p>` : ""}</td><td class="whitespace-nowrap">${fDias(c.dias)}</td>
     <td class="whitespace-nowrap">${c.dispositivo_hash ? `<span class="badge bg-emerald-500/15 text-emerald-300" title="Vinculado el ${fFecha(c.dispositivo_at)}">📱 Vinculado</span>` : `<span class="text-xs text-slate-500">Sin vincular</span>`}</td>
     <td class="whitespace-nowrap">${c.remoto_activo ? `<span class="badge bg-violet-500/15 text-violet-300">🏠 ${fDias(c.remoto_dias)}</span>` : `<span class="text-xs text-slate-500">—</span>`}</td>
     <td>${c.estado === "Activa" ? `<span class="badge bg-emerald-500/15 text-emerald-300">Activa</span>` : `<span class="badge bg-slate-600/40 text-slate-300">Inactiva</span>`}</td>
-    <td class="text-right whitespace-nowrap"><button class="btn btn-sm btn-sec" onclick="abrirColaborador('${c.id}')"><i class="fa-solid fa-pen"></i></button>
+    <td class="text-right whitespace-nowrap">${puedeEditar("colaboradores") ? `<button class="btn btn-sm btn-sec" onclick="abrirColaborador('${c.id}')"><i class="fa-solid fa-pen"></i></button>
     <button class="btn btn-sm btn-sec" title="${c.estado === "Activa" ? "Desactivar" : "Activar"}" onclick="toggleColaborador('${c.id}')"><i class="fa-solid ${c.estado === "Activa" ? "fa-user-slash" : "fa-user-check"}"></i></button>
-    <button class="btn btn-sm btn-dan" onclick="borrarColaborador('${c.id}')"><i class="fa-solid fa-trash"></i></button></td></tr>`).join("")
+    <button class="btn btn-sm btn-dan" onclick="borrarColaborador('${c.id}')"><i class="fa-solid fa-trash"></i></button>` : ""}</td></tr>`).join("")
     : `<tr><td colspan="9" class="text-center text-slate-400 py-6">${q ? "Sin resultados." : "Todavía no cargaste colaboradores."}</td></tr>`;
 }
 function abrirColaborador(id) {
@@ -923,6 +938,10 @@ function abrirColaborador(id) {
       <div><label class="lbl">Nombre y apellido</label><input id="cNom" class="inp" value="${esc(c.nombre)}"></div>
       <div><label class="lbl">DNI (con el que ficha)</label><input id="cDni" class="inp font-mono" inputmode="numeric" value="${esc(c.dni)}"></div>
       <div><label class="lbl">Cargo</label><input id="cCar" class="inp" value="${esc(c.cargo)}"></div>
+      <div><label class="lbl">Oficina principal</label><select id="cOfi" class="inp">
+        ${oficinasLimitadas() ? "" : `<option value="">Sin asignar</option>`}
+        ${(S.cache.oficinasEmp || []).map(o => `<option value="${o.id}" ${o.id === c.oficina_id ? "selected" : ""}>${esc(o.nombre)}</option>`).join("")}
+      </select><p class="text-xs text-slate-400 mt-1">Define qué encargados ven a esta persona. Puede fichar en cualquier oficina.</p></div>
       <div class="grid grid-cols-2 gap-3">
         <div><label class="lbl">Hora de entrada</label><input id="cHE" type="time" class="inp" value="${hm(c.hora_entrada)}"></div>
         <div><label class="lbl">Hora de salida</label><input id="cHS" type="time" class="inp" value="${hm(c.hora_salida)}"></div>
@@ -992,6 +1011,8 @@ async function guardarColaborador(id) {
   if (!fila.hora_entrada || !fila.hora_salida) return $("cErr").textContent = "Completá la hora de entrada y la de salida.";
   if (fila.hora_entrada === fila.hora_salida) return $("cErr").textContent = "La entrada y la salida no pueden ser a la misma hora.";
   if (!fila.dias.length) return $("cErr").textContent = "Marcá al menos un día de trabajo.";
+  fila.oficina_id = $("cOfi").value || null;
+  if (oficinasLimitadas() && !fila.oficina_id) return $("cErr").textContent = "Elegí la oficina principal.";
   if (esFull()) {
     const hd = {};
     for (const [d, , nom] of DIAS) {
@@ -1069,7 +1090,7 @@ async function buscarRegistros() {
         <td>${esc(x.oficina?.nombre || "—")}${x.oficina_salida && x.oficina_salida.nombre !== x.oficina?.nombre ? `<p class="text-xs text-slate-400">Salida: ${esc(x.oficina_salida.nombre)}</p>` : ""}</td>
         <td class="whitespace-nowrap">${fHora(x.entrada)}${iconoLugar(x.entrada_lugar, x.entrada_distancia_m)}</td><td class="whitespace-nowrap">${x.salida ? (fFecha(x.salida) !== fFecha(x.entrada) ? fFecha(x.salida) + " " : "") + fHora(x.salida) + iconoLugar(x.salida_lugar, x.salida_distancia_m) : "—"}</td>
         <td>${x.salida ? fMin(minutosTrabajados(x)) : "—"}</td><td>${estadoBadge(x)}</td>
-        <td><button class="btn btn-sm btn-sec" title="Corregir" onclick="abrirCorreccion(${x.id})"><i class="fa-solid fa-pen"></i></button></td></tr>`).join("")
+        <td>${puedeEditar("registros") ? `<button class="btn btn-sm btn-sec" title="Corregir" onclick="abrirCorreccion(${x.id})"><i class="fa-solid fa-pen"></i></button>` : ""}</td></tr>`).join("")
       : `<tr><td colspan="10" class="text-center text-slate-400 py-6">Sin fichajes en ese período.</td></tr>`}
     </tbody></table></div>
     ${rech?.length ? `<div class="card overflow-x-auto mt-6">
@@ -1140,7 +1161,7 @@ async function tabAusencias() {
   $("empMain").innerHTML = `
     <div class="flex flex-wrap gap-3 justify-between items-center mb-1">
       <h3 class="text-xl font-bold">Licencias, vacaciones y francos</h3>
-      <button class="btn btn-pri" onclick="abrirAusencia()"><i class="fa-solid fa-plus"></i>Cargar</button>
+      ${puedeEditar("licencias") ? `<button class="btn btn-pri" onclick="abrirAusencia()"><i class="fa-solid fa-plus"></i>Cargar</button>` : ""}
     </div>
     <p class="text-sm text-slate-400 mb-5">Los días cargados no cuentan como falta ni piden fichaje. Se muestran las de los últimos 90 días y las próximas.</p>
     <div class="card overflow-x-auto"><table class="tbl"><thead><tr><th>Colaborador</th><th>Tipo</th><th>Desde</th><th>Hasta</th><th>Días</th><th>Estado</th><th>Nota</th><th></th></tr></thead><tbody>
@@ -1148,8 +1169,8 @@ async function tabAusencias() {
         return `<tr><td class="font-medium">${esc(a.colaboradores?.nombre)}</td><td class="whitespace-nowrap">${t[1]} ${t[0]}</td>
         <td class="whitespace-nowrap">${fFecha(a.desde + "T12:00:00")}</td><td class="whitespace-nowrap">${fFecha(a.hasta + "T12:00:00")}</td><td>${dias(a)}</td>
         <td><span class="badge ${e[1]}">${e[0]}</span></td><td class="text-xs text-slate-300">${esc(a.nota)}</td>
-        <td class="text-right whitespace-nowrap"><button class="btn btn-sm btn-sec" onclick="abrirAusencia(${a.id})"><i class="fa-solid fa-pen"></i></button>
-        <button class="btn btn-sm btn-dan" onclick="borrarAusencia(${a.id})"><i class="fa-solid fa-trash"></i></button></td></tr>`; }).join("")
+        <td class="text-right whitespace-nowrap">${puedeEditar("licencias") ? `<button class="btn btn-sm btn-sec" onclick="abrirAusencia(${a.id})"><i class="fa-solid fa-pen"></i></button>
+        <button class="btn btn-sm btn-dan" onclick="borrarAusencia(${a.id})"><i class="fa-solid fa-trash"></i></button>` : ""}</td></tr>`; }).join("")
       : `<tr><td colspan="8" class="text-center text-slate-400 py-6">Todavía no hay licencias cargadas.</td></tr>`}
     </tbody></table></div>`;
 }
@@ -1202,7 +1223,7 @@ async function tabFeriados() {
       <select class="inp !w-auto" onchange="S.anioFer=this.value;tabFeriados()">${[+hoy.slice(0, 4), +hoy.slice(0, 4) + 1].map(y => `<option ${String(y) === String(anio) ? "selected" : ""}>${y}</option>`).join("")}</select>
     </div>
     <div class="card p-4 mb-6">
-      <label class="flex items-start gap-2 text-sm cursor-pointer"><input type="checkbox" id="feResp" class="w-4 h-4 mt-0.5" ${resp ? "checked" : ""} onchange="guardarRespetaFeriados(this.checked)">
+      <label class="flex items-start gap-2 text-sm cursor-pointer"><input type="checkbox" id="feResp" class="w-4 h-4 mt-0.5" ${resp ? "checked" : ""} ${puedeEditar("feriados") ? "" : "disabled"} onchange="guardarRespetaFeriados(this.checked)">
         <span><b>Respetar los feriados nacionales.</b> Esos días no se espera fichaje y nadie figura ausente. Si alguien trabaja, queda como día no laborable (en los reportes, horas al 100%). Desmarcalo si tu empresa trabaja normalmente los feriados.</span></label>
     </div>
     <div class="grid lg:grid-cols-2 gap-6">
@@ -1213,13 +1234,13 @@ async function tabFeriados() {
       </div>
       <div class="card overflow-x-auto">
         <div class="px-4 py-3 border-b border-slate-700 font-semibold text-sm">Días no laborables de tu empresa</div>
-        <div class="p-4 grid grid-cols-[1fr_2fr_auto] gap-2 items-end border-b border-slate-700">
+        ${puedeEditar("feriados") ? `<div class="p-4 grid grid-cols-[1fr_2fr_auto] gap-2 items-end border-b border-slate-700">
           <div><label class="lbl">Fecha</label><input id="edFecha" type="date" class="inp"></div>
           <div><label class="lbl">Motivo</label><input id="edNom" class="inp" placeholder="Día del gremio, inventario…"></div>
           <button class="btn btn-pri" onclick="guardarDiaPropio()"><i class="fa-solid fa-plus"></i></button>
-        </div>
+        </div>` : ""}
         <table class="tbl"><tbody>${(prop || []).map(d => `<tr><td class="whitespace-nowrap">${fFecha(d.fecha + "T12:00:00")}</td><td>${esc(d.nombre)}</td>
-          <td class="text-right"><button class="btn btn-sm btn-dan" onclick="borrarDiaPropio(${d.id})"><i class="fa-solid fa-trash"></i></button></td></tr>`).join("")
+          <td class="text-right">${puedeEditar("feriados") ? `<button class="btn btn-sm btn-dan" onclick="borrarDiaPropio(${d.id})"><i class="fa-solid fa-trash"></i></button>` : ""}</td></tr>`).join("")
           || `<tr><td class="text-slate-400 text-center py-6">Sin días propios cargados.</td></tr>`}</tbody></table>
       </div>
     </div>`;
@@ -1241,6 +1262,120 @@ async function borrarDiaPropio(id) {
   tabFeriados();
 }
 
+// ---- Encargados (solo administradores) ----
+const NIVEL_TXT = { no: "Sin acceso", ver: "Ver", editar: "Ver y editar" };
+async function tabEncargados() {
+  let res, ofis;
+  try {
+    [res, { data: ofis }] = await Promise.all([
+      adminFn({ accion: "enc_listar", empresa_id: S.empresaId }),
+      sb.from("oficinas").select("id, nombre").eq("empresa_id", S.empresaId).order("nombre"),
+    ]);
+  } catch (e) { if ($("empMain") && S.tab === "encargados") $("empMain").innerHTML = `<p class="text-red-400">${esc(errTxt(e))}</p>`; return; }
+  if (S.tab !== "encargados" || !$("empMain")) return;
+  S.cache.encargados = res.usuarios || []; S.cache.oficinasEnc = ofis || [];
+  const nomOf = id => S.cache.oficinasEnc.find(o => o.id === id)?.nombre || "Oficina eliminada";
+  $("empMain").innerHTML = `
+    <div class="flex flex-wrap gap-3 justify-between items-center mb-1">
+      <h3 class="text-xl font-bold">Encargados</h3>
+      <button class="btn btn-pri" onclick="abrirEncargado()"><i class="fa-solid fa-user-plus"></i>Nuevo encargado</button>
+    </div>
+    <p class="text-sm text-slate-400 mb-5">Usuarios con acceso limitado: vos elegís qué secciones ven o editan, y de qué oficinas.</p>
+    <div class="grid gap-3">
+      ${S.cache.encargados.length ? S.cache.encargados.map(u => {
+        const p = u.permisos || {};
+        const chips = SECCIONES.filter(([k]) => (p[k] || "no") !== "no").map(([k, t]) =>
+          `<span class="badge ${p[k] === "editar" ? "bg-emerald-500/15 text-emerald-300" : "bg-slate-600/40 text-slate-300"}">${t}: ${p[k] === "editar" ? "editar" : "ver"}</span>`).join(" ");
+        return `<div class="card p-4 flex flex-wrap gap-3 justify-between items-start">
+          <div class="min-w-0">
+            <p class="font-semibold">${esc(u.nombre || u.email)} ${u.clave_temporal ? `<span class="badge bg-amber-500/15 text-amber-300">Clave temporal</span>` : ""}</p>
+            <p class="text-xs text-slate-400">${esc(u.email)} · Último ingreso: ${u.ultimo_ingreso ? fFecha(u.ultimo_ingreso) + " " + fHora(u.ultimo_ingreso) : "nunca"}</p>
+            <p class="text-xs text-slate-300 mt-2"><i class="fa-solid fa-location-dot mr-1"></i>${Array.isArray(u.oficinas_permitidas) ? u.oficinas_permitidas.map(nomOf).map(esc).join(", ") : "Todas las oficinas"}</p>
+            <div class="flex flex-wrap gap-1 mt-2">${chips || `<span class="text-xs text-slate-400">Sin secciones</span>`}</div>
+          </div>
+          <div class="flex gap-1">
+            <button class="btn btn-sm btn-sec" onclick="abrirEncargado('${u.user_id}')"><i class="fa-solid fa-pen"></i>Permisos</button>
+            <button class="btn btn-sm btn-sec" onclick="resetEncargado('${u.user_id}')"><i class="fa-solid fa-key"></i>Nueva clave</button>
+            <button class="btn btn-sm btn-dan" onclick="borrarEncargado('${u.user_id}')"><i class="fa-solid fa-trash"></i></button>
+          </div></div>`; }).join("")
+      : `<div class="card p-8 text-center"><i class="fa-solid fa-user-shield text-3xl text-slate-400"></i>
+          <p class="font-semibold mt-3">Todavía no hay encargados</p>
+          <p class="text-sm text-slate-400 mt-1">Por ejemplo, un jefe de sucursal que solo ve a su gente y corrige fichajes.</p></div>`}
+    </div>`;
+}
+function abrirEncargado(uid) {
+  const u = uid ? S.cache.encargados.find(x => x.user_id === uid) : { email: "", nombre: "", permisos: { panel: "ver", registros: "ver" }, oficinas_permitidas: null };
+  const p = u.permisos || {}, todas = !Array.isArray(u.oficinas_permitidas);
+  abrirModal(`
+    <h3 class="text-lg font-bold mb-4">${uid ? "Permisos de " + esc(u.nombre || u.email) : "Nuevo encargado"}</h3>
+    <div class="space-y-3">
+      <div class="grid sm:grid-cols-2 gap-3">
+        <div><label class="lbl">Email</label><input id="enMail" type="email" class="inp" value="${esc(u.email)}" ${uid ? "disabled" : ""}></div>
+        <div><label class="lbl">Nombre</label><input id="enNom" class="inp" value="${esc(u.nombre || "")}"></div>
+      </div>
+      <div>
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-2"><label class="lbl !mb-0">Qué puede hacer</label>
+          <div class="flex gap-1">
+            <button type="button" class="btn btn-sm btn-sec" onclick="marcarPermisos('ver')">Todo ver</button>
+            <button type="button" class="btn btn-sm btn-sec" onclick="marcarPermisos('editar')">Todo editar</button>
+            <button type="button" class="btn btn-sm btn-sec" onclick="marcarPermisos('no')">Nada</button>
+          </div></div>
+        <div class="rounded-xl border border-slate-700 overflow-hidden">
+          <table class="tbl"><thead><tr><th>Sección</th>${["no", "ver", "editar"].map(n => `<th class="!text-center">${NIVEL_TXT[n]}</th>`).join("")}</tr></thead><tbody>
+          ${SECCIONES.map(([k, t, full]) => `<tr><td>${t}${k === "reportes" ? ` <span class="text-xs text-slate-400">(próximamente)</span>` : full && !esFull() ? ` <i class="fa-solid fa-lock text-[10px] text-slate-500" title="Versión Full"></i>` : ""}</td>
+            ${["no", "ver", "editar"].map(n => `<td class="text-center"><input type="radio" name="pe_${k}" value="${n}" class="w-4 h-4" ${(p[k] || "no") === n ? "checked" : ""} aria-label="${t}: ${NIVEL_TXT[n]}"></td>`).join("")}</tr>`).join("")}
+          </tbody></table>
+        </div>
+      </div>
+      <div>
+        <label class="lbl">Oficinas que ve</label>
+        <label class="flex items-center gap-2 text-sm"><input type="radio" name="enAlc" value="todas" class="w-4 h-4" ${todas ? "checked" : ""} onchange="$('enOfis').classList.add('hidden')"> Todas las oficinas</label>
+        <label class="flex items-center gap-2 text-sm mt-1"><input type="radio" name="enAlc" value="algunas" class="w-4 h-4" ${todas ? "" : "checked"} onchange="$('enOfis').classList.remove('hidden')"> Solo estas oficinas:</label>
+        <div id="enOfis" class="${todas ? "hidden" : ""} grid sm:grid-cols-2 gap-1 mt-2 pl-6">
+          ${S.cache.oficinasEnc.map(o => `<label class="flex items-center gap-2 text-sm"><input type="checkbox" value="${o.id}" class="w-4 h-4" ${!todas && u.oficinas_permitidas.includes(o.id) ? "checked" : ""}> ${esc(o.nombre)}</label>`).join("") || `<p class="text-xs text-slate-400">La empresa no tiene oficinas.</p>`}
+        </div>
+        <p class="text-xs text-slate-400 mt-2">Con oficinas elegidas, ve solo a los colaboradores de esas oficinas (según su oficina principal) y sus fichajes.</p>
+      </div>
+      <p id="enErr" class="text-red-400 text-sm min-h-[1.25rem]"></p>
+      <div class="flex justify-end gap-2"><button class="btn btn-sec" onclick="cerrarModal()">Cancelar</button><button id="enBtn" class="btn btn-pri" onclick="guardarEncargado(${uid ? `'${uid}'` : "null"})">${uid ? "Guardar" : "Crear encargado"}</button></div>
+    </div>`);
+}
+function marcarPermisos(n) { SECCIONES.forEach(([k]) => { const r = document.querySelector(`input[name="pe_${k}"][value="${n}"]`); if (r) r.checked = true; }); }
+async function guardarEncargado(uid) {
+  const permisos = {};
+  SECCIONES.forEach(([k]) => permisos[k] = document.querySelector(`input[name="pe_${k}"]:checked`)?.value || "no");
+  const algunas = document.querySelector('input[name="enAlc"]:checked')?.value === "algunas";
+  const oficinas = algunas ? [...document.querySelectorAll("#enOfis input:checked")].map(i => i.value) : null;
+  const email = $("enMail").value.trim(), nombre = $("enNom").value.trim();
+  $("enErr").textContent = "";
+  if (!uid && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return $("enErr").textContent = "Ingresá un email válido.";
+  if (!Object.values(permisos).some(v => v !== "no")) return $("enErr").textContent = "Dale acceso a al menos una sección.";
+  if (algunas && !oficinas.length) return $("enErr").textContent = "Elegí al menos una oficina, o marcá Todas.";
+  const b = $("enBtn"); b.disabled = true;
+  try {
+    if (uid) {
+      await adminFn({ accion: "enc_actualizar", empresa_id: S.empresaId, user_id: uid, nombre, permisos, oficinas });
+      cerrarModal(); toast("Permisos guardados");
+    } else {
+      const { usuario } = await adminFn({ accion: "enc_crear", empresa_id: S.empresaId, email, nombre, permisos, oficinas });
+      mostrarClave(usuario.email, usuario.clave_temporal, "Encargado creado.");
+    }
+    tabEncargados();
+  } catch (e) { $("enErr").textContent = errTxt(e); b.disabled = false; }
+}
+async function resetEncargado(uid) {
+  const u = S.cache.encargados.find(x => x.user_id === uid);
+  if (!confirm(`¿Generar una contraseña temporal nueva para ${u.email}?`)) return;
+  try { const r = await adminFn({ accion: "enc_resetear", empresa_id: S.empresaId, user_id: uid }); mostrarClave(u.email, r.clave_temporal, "Contraseña restablecida."); tabEncargados(); }
+  catch (e) { toast(errTxt(e), "error"); }
+}
+async function borrarEncargado(uid) {
+  const u = S.cache.encargados.find(x => x.user_id === uid);
+  if (!confirm(`¿Eliminar a ${u.nombre || u.email}? No va a poder entrar más.`)) return;
+  try { await adminFn({ accion: "enc_eliminar", empresa_id: S.empresaId, user_id: uid }); toast("Encargado eliminado"); tabEncargados(); }
+  catch (e) { toast(errTxt(e), "error"); }
+}
+
 // ---- Tolerancia ----
 function tabAjustes() {
   const e = S.empresa;
@@ -1249,12 +1384,12 @@ function tabAjustes() {
       <h3 class="text-lg font-bold mb-1">Configuración</h3>
       <p class="font-semibold text-sm mt-4 mb-1">Tolerancia</p>
       <p class="text-sm text-slate-400 mb-4">Minutos de margen para todos los colaboradores. Llegar dentro de este margen no cuenta como tardanza, e irse dentro de este margen antes de la hora de salida no cuenta como salida anticipada.</p>
-      <div class="max-w-[12rem]"><label class="lbl">Tolerancia (minutos)</label><input type="number" id="ajTol" min="0" max="240" class="inp" value="${e.tolerancia_min}"></div>
+      <div class="max-w-[12rem]"><label class="lbl">Tolerancia (minutos)</label><input type="number" id="ajTol" min="0" max="240" class="inp" value="${e.tolerancia_min}" ${puedeEditar("configuracion") ? "" : "disabled"}></div>
       <p class="text-xs text-slate-400 mt-3">Los horarios de entrada, salida y días de trabajo se cargan en cada colaborador, desde <b>Colaboradores</b>.</p>
       <p class="font-semibold text-sm mt-6 mb-1">Celular vinculado</p>
-      <label class="flex items-start gap-2 text-sm cursor-pointer"><input type="checkbox" id="ajVinc" class="w-4 h-4 mt-0.5" ${e.vincular_dispositivo !== false ? "checked" : ""}>
+      <label class="flex items-start gap-2 text-sm cursor-pointer"><input type="checkbox" id="ajVinc" class="w-4 h-4 mt-0.5" ${e.vincular_dispositivo !== false ? "checked" : ""} ${puedeEditar("configuracion") ? "" : "disabled"}>
         <span>Cada colaborador ficha solo desde su propio celular. El primer fichaje vincula el celular al DNI; si cambia de teléfono, lo desvinculás desde <b>Colaboradores</b>. Apagalo solo si usan un celular o tablet compartido para fichar.</span></label>
-      <button class="btn btn-pri mt-5" onclick="guardarTolerancia()">Guardar</button>
+      ${puedeEditar("configuracion") ? `<button class="btn btn-pri mt-5" onclick="guardarTolerancia()">Guardar</button>` : `<p class="text-xs text-slate-400 mt-5"><i class="fa-solid fa-eye mr-1"></i>Solo lectura.</p>`}
     </div>`;
 }
 async function guardarTolerancia() {
