@@ -454,6 +454,7 @@ async function renderSuperEmpresas() {
       <span class="badge bg-amber-500/15 text-amber-300">En prueba: ${emps.filter(e => e.plan === "demo" && diasRestantes(e) >= 0).length}</span>
       <span class="badge bg-red-500/15 text-red-300">Prueba vencida: ${emps.filter(e => e.plan === "demo" && diasRestantes(e) < 0).length}</span>
     </div>
+    ${avisoPruebas(emps)}
     <div class="flex flex-wrap gap-3 justify-between items-center mb-4">
       <h3 class="text-xl font-bold">Empresas clientes y sucursales</h3>
       <button class="btn btn-pri" onclick="abrirNuevaEmpresa()"><i class="fa-solid fa-plus"></i>Nueva empresa</button>
@@ -462,6 +463,30 @@ async function renderSuperEmpresas() {
       ${emps.length ? emps.map(emp => cardEmpresa(emp, (ofis || []).filter(o => o.empresa_id === emp.id), (cols || []).filter(c => c.empresa_id === emp.id && c.estado === "Activa").length)).join("") : `<p class="text-slate-400">Todavía no hay empresas.</p>`}
     </div>`;
   pintarQRs();
+}
+// Aviso al superadmin: pruebas que vencen en 3 días o menos (o ya vencidas)
+function avisoPruebas(emps) {
+  const lista = emps.filter(e => e.plan === "demo" && e.activa && diasRestantes(e) <= 3).sort((a, b) => a.demo_hasta.localeCompare(b.demo_hasta));
+  if (!lista.length) return "";
+  return `<div class="card p-4 mb-6 border-amber-500/40 bg-amber-500/5">
+    <h4 class="font-bold text-amber-200 mb-1"><i class="fa-solid fa-bell mr-1"></i>Pruebas por vencer</h4>
+    <p class="text-xs text-slate-400 mb-3">Al vencer la prueba se bloquea la cuenta (no pueden entrar ni fichar). Pasalas al plan que corresponda antes de esa fecha.</p>
+    <div class="space-y-2">${lista.map(e => `
+      <div class="flex flex-wrap items-center justify-between gap-2 bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2">
+        <div class="text-sm"><b>${esc(e.nombre)}</b> ${planBadge(e)}</div>
+        <div class="flex gap-1">
+          <button class="btn btn-sm btn-sec" onclick="cambiarPlan('${e.id}','standard')">Pasar a Standard</button>
+          <button class="btn btn-sm btn-pri" onclick="cambiarPlan('${e.id}','full')">Pasar a Full</button>
+        </div>
+      </div>`).join("")}</div>
+  </div>`;
+}
+async function cambiarPlan(id, plan) {
+  const e = (S.cache.empresas || []).find(x => x.id === id);
+  if (!confirm(`¿Pasar "${e?.nombre || "la empresa"}" al plan ${plan === "full" ? "Full" : "Standard"}?`)) return;
+  const { error } = await sb.from("empresas").update({ plan }).eq("id", id);
+  if (error) return toast(errTxt(error), "error");
+  toast("Plan actualizado"); renderSuperEmpresas();
 }
 function stat(t, v, ic, col) {
   return `<div class="card p-4"><div class="flex items-center justify-between"><p class="text-xs text-slate-400 font-medium">${t}</p><i class="fa-solid ${ic} text-${col}-400"></i></div><p class="text-2xl font-bold mt-1">${v}</p></div>`;
