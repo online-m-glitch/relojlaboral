@@ -132,6 +132,8 @@ function upsell(funcion) {
       <h3 class="text-lg font-bold">${esc(funcion)} es parte de la versión Full</h3>
       <p class="text-sm text-slate-400 mt-2">Tu empresa tiene el plan Standard. La versión Full suma:</p>
       <ul class="text-sm text-left text-slate-300 mt-3 space-y-1.5 max-w-xs mx-auto">
+        <li><i class="fa-solid fa-check text-emerald-400 mr-2"></i>Geolocalización: fichar solo en el lugar</li>
+        <li><i class="fa-solid fa-check text-emerald-400 mr-2"></i>Home office con ubicación propia</li>
         <li><i class="fa-solid fa-check text-emerald-400 mr-2"></i>Licencias, vacaciones y francos</li>
         <li><i class="fa-solid fa-check text-emerald-400 mr-2"></i>Feriados nacionales automáticos</li>
         <li><i class="fa-solid fa-check text-emerald-400 mr-2"></i>Horario distinto según el día</li>
@@ -232,16 +234,22 @@ async function ubiBuscar(p) {
   } catch { $(p + "Res").innerHTML = `<p class="text-xs text-red-400">No se pudo buscar ahora. Pegá las coordenadas de Google Maps.</p>`; }
 }
 function ubiElegir(p, i) { const x = S.cache.ubiRes[i]; $(p + "Res").innerHTML = ""; ubiSet(p, x.lat, x.lon, "Ubicación de la dirección elegida. Revisá en el mapa que el punto esté bien."); }
-const badgeGeo = o => o.geo_activa && o.lat != null
+const badgeGeo = (o, emp = S.empresa) => !esFullEmp(emp)
+  ? `<span class="badge bg-slate-600/40 text-slate-300">📍 Geolocalización <i class="fa-solid fa-lock text-[10px]"></i> Full</span>`
+  : o.geo_activa && o.lat != null
   ? `<span class="badge bg-emerald-500/15 text-emerald-300">📍 Geocerca ${o.radio_m} m</span>`
   : `<span class="badge bg-slate-600/40 text-slate-300">📍 Sin geocerca</span>`;
 function abrirUbicacion(ofiId) {
   const o = (S.cache.oficinas || []).find(x => x.id === ofiId);
+  const emp = S.empresa || (S.cache.empresas || []).find(e => e.id === o.empresa_id);
+  const full = esFullEmp(emp);
+  if (!full && S.perfil.rol !== "superadmin") return upsell("La geolocalización");
   abrirModal(`
     <h3 class="text-lg font-bold mb-1">Ubicación de ${esc(o.nombre)}</h3>
     <p class="text-sm text-slate-400 mb-4">Con la geocerca activa, solo se puede fichar estando dentro del radio (o en el lugar remoto del colaborador, si lo tiene).</p>
     ${ubiEditorHTML("uo", { lat: o.lat, lng: o.lng, radio: o.radio_m })}
     <label class="flex items-center gap-2 mt-4 text-sm"><input type="checkbox" id="uoActiva" class="w-4 h-4" ${o.geo_activa ? "checked" : ""}> Exigir estar en el lugar para fichar (geocerca activa)</label>
+    ${full ? "" : `<p class="text-xs text-amber-300 mt-2"><i class="fa-solid fa-lock mr-1"></i>Esta empresa tiene plan Standard: la geocerca queda guardada, pero solo se exige cuando pase a la versión Full.</p>`}
     <p id="uoErr" class="text-red-400 text-sm min-h-[1.25rem] mt-2"></p>
     <div class="flex justify-end gap-2"><button class="btn btn-sec" onclick="cerrarModal()">Cancelar</button><button class="btn btn-pri" onclick="guardarUbicacion('${ofiId}')">Guardar</button></div>`);
   if (!$("uoBuscar").value && o.direccion) $("uoBuscar").value = o.direccion;
@@ -481,7 +489,7 @@ function cardEmpresa(emp, ofis, nCols) {
             <h6 class="font-bold text-white text-sm truncate">${esc(o.nombre)}</h6>
             <p class="text-xs text-slate-400 truncate">${esc(o.direccion) || "Sin dirección"}</p>
             <p class="text-[10px] font-mono text-amber-400 mt-1 break-all">${esc(o.qr_token)}</p>
-            <div class="mt-1">${badgeGeo(o)}</div>
+            <div class="mt-1">${badgeGeo(o, emp)}</div>
             <div class="flex flex-wrap gap-1 mt-2">
               <button class="btn btn-sm btn-sec" title="Ubicación / geocerca" onclick="abrirUbicacion('${o.id}')"><i class="fa-solid fa-location-dot"></i></button>
               <button class="btn btn-sm btn-sec" title="Imprimir" onclick="imprimirQR('${o.id}')"><i class="fa-solid fa-print"></i></button>
@@ -918,7 +926,7 @@ function pintarColaboradores() {
     <tr class="${c.estado === "Activa" ? "" : "opacity-50"}"><td class="font-medium">${esc(c.nombre)}${c.oficina_id ? `<p class="text-xs text-slate-400 font-normal"><i class="fa-solid fa-location-dot mr-1"></i>${esc((S.cache.oficinasEmp || []).find(o => o.id === c.oficina_id)?.nombre || "")}</p>` : ""}</td><td class="font-mono">${esc(c.dni)}</td><td>${esc(c.cargo)}</td>
     <td class="whitespace-nowrap">${fHorario(c)}${Object.keys(c.horario_dias || {}).length ? `<p class="text-xs text-indigo-300">${Object.entries(c.horario_dias).sort().map(([d, h]) => `${DIAS[d - 1][1]} ${h.e}–${h.s}`).join(" · ")}</p>` : ""}</td><td class="whitespace-nowrap">${fDias(c.dias)}</td>
     <td class="whitespace-nowrap">${c.dispositivo_hash ? `<span class="badge bg-emerald-500/15 text-emerald-300" title="Vinculado el ${fFecha(c.dispositivo_at)}">📱 Vinculado</span>` : `<span class="text-xs text-slate-500">Sin vincular</span>`}</td>
-    <td class="whitespace-nowrap">${c.remoto_activo ? `<span class="badge bg-violet-500/15 text-violet-300">🏠 ${fDias(c.remoto_dias)}</span>` : `<span class="text-xs text-slate-500">—</span>`}</td>
+    <td class="whitespace-nowrap">${!esFull() ? `<span class="text-xs text-slate-500"><i class="fa-solid fa-lock text-[10px]"></i> Full</span>` : c.remoto_activo ? `<span class="badge bg-violet-500/15 text-violet-300">🏠 ${fDias(c.remoto_dias)}</span>` : `<span class="text-xs text-slate-500">—</span>`}</td>
     <td>${c.estado === "Activa" ? `<span class="badge bg-emerald-500/15 text-emerald-300">Activa</span>` : `<span class="badge bg-slate-600/40 text-slate-300">Inactiva</span>`}</td>
     <td class="text-right whitespace-nowrap">${puedeEditar("colaboradores") ? `<button class="btn btn-sm btn-sec" onclick="abrirColaborador('${c.id}')"><i class="fa-solid fa-pen"></i></button>
     <button class="btn btn-sm btn-sec" title="${c.estado === "Activa" ? "Desactivar" : "Activar"}" onclick="toggleColaborador('${c.id}')"><i class="fa-solid ${c.estado === "Activa" ? "fa-user-slash" : "fa-user-check"}"></i></button>
@@ -969,6 +977,9 @@ function abrirColaborador(id) {
         ${c.dispositivo_hash ? `<span>📱 Celular vinculado el ${fFecha(c.dispositivo_at)}</span><button type="button" class="btn btn-sm btn-sec" onclick="desvincularCelular('${id}')">Desvincular</button>`
           : `<span class="text-slate-400">📱 Sin celular vinculado: se vincula solo en su primer fichaje.</span>`}</div>` : ""}
       <div class="border-t border-slate-700 pt-3">
+        ${esFull() ? "" : `<p class="text-sm font-semibold">🏠 Home office <i class="fa-solid fa-lock text-xs text-slate-500 ml-1"></i></p>
+          <p class="text-xs text-slate-400 mt-1">Fichar desde un lugar remoto usa la geolocalización, disponible en la versión Full. <button type="button" class="text-indigo-300 underline" onclick="upsell('El home office')">Ver más</button></p>`}
+        <div class="${esFull() ? "" : "hidden"}">
         <label class="flex items-center gap-2 text-sm font-semibold cursor-pointer"><input type="checkbox" id="cRem" class="w-4 h-4" ${c.remoto_activo ? "checked" : ""} onchange="$('cRemBox').classList.toggle('hidden', !this.checked); if (this.checked) ubiMapa('cr')"> 🏠 Puede fichar desde un lugar remoto (home office)</label>
         <div id="cRemBox" class="${c.remoto_activo ? "" : "hidden"} space-y-3 mt-3">
           <div><label class="lbl">Dirección del lugar remoto (referencia)</label><input id="cRemDir" class="inp" value="${esc(c.remoto_direccion || "")}" oninput="$('crBuscar').value=this.value"></div>
@@ -988,6 +999,7 @@ function abrirColaborador(id) {
               <button type="button" class="btn btn-sm btn-sec" onclick="navigator.clipboard.writeText('${esc(linkPersonal)}').then(()=>toast('Link copiado'))"><i class="fa-solid fa-link"></i>Copiar link</button>
               <a class="btn btn-sm btn-sec" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent("Link para fichar tu entrada y salida: " + linkPersonal)}"><i class="fa-brands fa-whatsapp"></i>WhatsApp</a>
             </div></div>` : `<p class="text-xs text-amber-300">Para tener el link de fichaje remoto la empresa necesita al menos una oficina activa.</p>`}
+        </div>
         </div>
       </div>
       <p id="cErr" class="text-red-400 text-sm min-h-[1.25rem]"></p>
@@ -1025,9 +1037,9 @@ async function guardarColaborador(id) {
     fila.horario_dias = hd;
   }
   const ur = ubiLeer("cr");
-  Object.assign(fila, { remoto_activo: $("cRem").checked, remoto_direccion: $("cRemDir").value.trim(), remoto_lat: ur.lat, remoto_lng: ur.lng,
+  if (esFull()) Object.assign(fila, { remoto_activo: $("cRem").checked, remoto_direccion: $("cRemDir").value.trim(), remoto_lat: ur.lat, remoto_lng: ur.lng,
     remoto_radio_m: ur.radio || 150, remoto_dias: [...document.querySelectorAll("#cRemDias input:checked")].map(i => +i.value) });
-  if (fila.remoto_activo) {
+  if (esFull() && fila.remoto_activo) {
     if (fila.remoto_lat == null || fila.remoto_lng == null) return $("cErr").textContent = "Cargá la ubicación del lugar remoto (buscá la dirección o pegá las coordenadas).";
     if (!fila.remoto_dias.length) return $("cErr").textContent = "Marcá al menos un día para el trabajo remoto.";
     if (fila.remoto_radio_m < 20 || fila.remoto_radio_m > 5000) return $("cErr").textContent = "El radio del lugar remoto tiene que ser entre 20 y 5000 m.";
