@@ -299,6 +299,12 @@ function errTxt(e) {
   return m;
 }
 async function rpc(fn, args) { const { data, error } = await sb.rpc(fn, args); if (error) throw error; return data; }
+async function tgFn(body) {
+  const { data, error } = await sb.functions.invoke("rl-telegram", { body });
+  if (error) { let m = error.message; try { m = (await error.context.json()).error || m; } catch {} throw new Error(m); }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
 async function adminFn(body) {
   const { data, error } = await sb.functions.invoke("rl-admin", { body });
   if (error) { let m = error.message; try { m = (await error.context.json()).error || m; } catch {} throw new Error(m); }
@@ -731,6 +737,14 @@ function renderSuperConfig() {
       <p class="text-xs text-slate-500 mt-3">Dirección actual de esta página: <span class="font-mono">${esc(location.origin + location.pathname)}</span></p>
     </div>
     <div class="card p-6 max-w-2xl mt-6">
+      <h3 class="text-lg font-bold mb-1"><i class="fa-brands fa-telegram text-sky-400 mr-1"></i>Bot de Telegram (avisos Full)</h3>
+      <p class="text-sm text-slate-400 mb-3">Creá un bot con <b>@BotFather</b> en Telegram (/newbot), pegá acá el token que te da y tocá <b>Guardar y conectar</b>. El token queda guardado en el servidor y no se vuelve a mostrar.</p>
+      <div id="tgEstado" class="text-sm mb-3">${cargando("Consultando…")}</div>
+      <label class="lbl">Token del bot</label>
+      <input id="tgToken" type="password" autocomplete="off" class="inp font-mono" placeholder="123456789:ABC…">
+      <button class="btn btn-pri mt-4" onclick="guardarBotTelegram()">Guardar y conectar</button>
+    </div>
+    <div class="card p-6 max-w-2xl mt-6">
       <h3 class="text-lg font-bold mb-1">Feriados nacionales</h3>
       <p class="text-sm text-slate-400 mb-4">Valen para todas las empresas con plan Full (o en prueba) que respetan feriados. Los "no laborables" son optativos y no cuentan como feriado.</p>
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end">
@@ -742,6 +756,25 @@ function renderSuperConfig() {
       <div id="fnLista" class="mt-4">${cargando()}</div>
     </div>`;
   cargarFeriadosNacionales();
+  estadoBotTelegram();
+}
+async function estadoBotTelegram() {
+  let html;
+  try {
+    const [r, { data: cfg }] = await Promise.all([tgFn({ accion: "estado" }), sb.from("config").select("valor").eq("clave", "telegram_bot").maybeSingle()]);
+    html = r.conectado ? `<span class="badge bg-emerald-500/15 text-emerald-300">Conectado</span> Bot <b>@${esc(cfg?.valor || "")}</b> · ${r.destinos} usuario(s) recibiendo avisos${r.ultimo_error ? `<p class="text-xs text-amber-300 mt-1">Último error de Telegram: ${esc(r.ultimo_error)}</p>` : ""}`
+      : `<span class="badge bg-slate-600/40 text-slate-300">Sin conectar</span>`;
+  } catch (e) { html = `<span class="text-red-400">${esc(errTxt(e))}</span>`; }
+  if ($("tgEstado")) $("tgEstado").innerHTML = html;
+}
+async function guardarBotTelegram() {
+  const t = $("tgToken").value.trim();
+  if (!t) return toast("Pegá el token del bot", "error");
+  try {
+    await rpc("rl_guardar_bot_token", { p_token: t });
+    const r = await tgFn({ accion: "configurar" });
+    $("tgToken").value = ""; toast("Bot @" + r.bot + " conectado"); estadoBotTelegram();
+  } catch (e) { toast(errTxt(e), "error"); }
 }
 async function cargarFeriadosNacionales() {
   const { data, error } = await sb.from("feriados").select("*").gte("fecha", hoyISO().slice(0, 4) + "-01-01").order("fecha");
@@ -784,6 +817,7 @@ const TABS = [
   ["registros", "Registros", "fa-list-check", false, "registros"],
   ["ausencias", "Licencias", "fa-umbrella-beach", true, "licencias"],
   ["feriados", "Feriados", "fa-calendar-xmark", true, "feriados"],
+  ["avisos", "Avisos Telegram", "fa-bell", true, "panel"],
   ["encargados", "Encargados", "fa-user-shield", false, "admin"],
   ["ajustes", "Configuración", "fa-gear", false, "configuracion"],
 ];
@@ -827,7 +861,7 @@ function renderEmpresa() {
   if (!vis.length) { $("empMain").innerHTML = `<div class="card p-8 max-w-md mx-auto text-center mt-10"><i class="fa-solid fa-lock text-3xl text-slate-400"></i>
     <h3 class="text-lg font-bold mt-3">Todavía no tenés secciones habilitadas</h3><p class="text-sm text-slate-400 mt-2">Pedile al administrador de tu empresa que te dé acceso.</p></div>`; return; }
   if (!vis.some(t => t[0] === S.tab)) S.tab = vis[0][0];
-  ({ encargados: tabEncargados, panel: tabPanel, oficinas: tabOficinas, colaboradores: tabColaboradores, registros: tabRegistros, ausencias: tabAusencias, feriados: tabFeriados, ajustes: tabAjustes })[S.tab]();
+  ({ encargados: tabEncargados, panel: tabPanel, oficinas: tabOficinas, colaboradores: tabColaboradores, registros: tabRegistros, ausencias: tabAusencias, feriados: tabFeriados, ajustes: tabAjustes, avisos: tabAvisos })[S.tab]();
 }
 
 // ---- Panel ----
@@ -1411,6 +1445,86 @@ async function borrarEncargado(uid) {
   if (!confirm(`¿Eliminar a ${u.nombre || u.email}? No va a poder entrar más.`)) return;
   try { await adminFn({ accion: "enc_eliminar", empresa_id: S.empresaId, user_id: uid }); toast("Encargado eliminado"); tabEncargados(); }
   catch (e) { toast(errTxt(e), "error"); }
+}
+
+// ---- Avisos por Telegram (Full) ----
+async function tabAvisos() {
+  $("empMain").innerHTML = cargando();
+  const [{ data: cfg }, { data: dest }, { data: ofis }] = await Promise.all([
+    sb.from("config").select("valor").eq("clave", "telegram_bot").maybeSingle(),
+    sb.from("telegram_destinos").select("*").eq("user_id", S.user.id).maybeSingle(),
+    sb.from("oficinas").select("id, nombre").eq("empresa_id", S.empresaId).eq("activa", true).order("nombre"),
+  ]);
+  if (S.tab !== "avisos" || !$("empMain")) return;
+  const bot = cfg?.valor;
+  const intro = `<h3 class="text-lg font-bold mb-1"><i class="fa-brands fa-telegram text-sky-400 mr-1"></i>Avisos por Telegram</h3>
+    <p class="text-sm text-slate-400 mb-4">Te llega un mensaje al celular, <b>separado por sucursal</b>, cuando alguien <b>no fichó a horario</b>, <b>llegó tarde</b> o tuvo un <b>intento de fichaje rechazado</b>. Cada administrador o encargado conecta su propio Telegram y recibe solo las sucursales que puede ver.</p>`;
+  if (S.perfil.rol === "superadmin") {
+    $("empMain").innerHTML = `<div class="card p-6 max-w-2xl">${intro}<p class="text-sm text-amber-200"><i class="fa-solid fa-circle-info mr-1"></i>Los avisos se conectan desde el usuario del administrador o encargado de la empresa, no desde el superadmin.</p></div>`;
+    return;
+  }
+  if (!bot) {
+    $("empMain").innerHTML = `<div class="card p-6 max-w-2xl">${intro}<p class="text-sm text-amber-200"><i class="fa-solid fa-clock mr-1"></i>Los avisos por Telegram todavía no están habilitados en la plataforma. Pronto vas a poder conectarlos desde acá.</p></div>`;
+    return;
+  }
+  if (!dest) {
+    $("empMain").innerHTML = `<div class="card p-6 max-w-2xl">${intro}
+      <ol class="text-sm text-slate-300 space-y-1 list-decimal pl-5 mb-5">
+        <li>Tocá <b>Conectar Telegram</b> (si estás en la compu, escaneá el código con el celular).</li>
+        <li>Se abre Telegram con el bot <b>@${esc(bot)}</b>: tocá <b>Iniciar</b>.</li>
+        <li>Volvé acá y tocá <b>Ya lo conecté</b>.</li></ol>
+      <div class="flex flex-wrap gap-2"><button class="btn btn-pri" onclick="conectarTelegram()"><i class="fa-brands fa-telegram"></i>Conectar Telegram</button>
+        <button class="btn btn-sec" onclick="tabAvisos()"><i class="fa-solid fa-rotate"></i>Ya lo conecté</button></div>
+      <div id="tgLink" class="mt-5"></div></div>`;
+    return;
+  }
+  const sel = dest.oficinas;
+  $("empMain").innerHTML = `<div class="card p-6 max-w-2xl">${intro}
+    <div class="rounded-xl bg-emerald-500/10 border border-emerald-500/30 p-3 text-sm text-emerald-200 mb-5"><i class="fa-solid fa-circle-check mr-1"></i>Conectado${dest.nombre ? ` como <b>${esc(dest.nombre)}</b>` : ""} desde el ${fFecha(dest.creado)}.</div>
+    <p class="font-semibold text-sm mb-2">Qué te avisamos</p>
+    <div class="space-y-2 text-sm mb-5">
+      <label class="flex items-center gap-2"><input type="checkbox" id="tgAus" class="w-4 h-4" ${dest.avisar_ausencias ? "checked" : ""}>⚠️ Quién no fichó a horario (pasada la tolerancia)</label>
+      <label class="flex items-center gap-2"><input type="checkbox" id="tgTar" class="w-4 h-4" ${dest.avisar_tardanzas ? "checked" : ""}>⏰ Quién llegó tarde</label>
+      <label class="flex items-center gap-2"><input type="checkbox" id="tgRech" class="w-4 h-4" ${dest.avisar_rechazos ? "checked" : ""}>🚫 Intentos de fichaje rechazados</label>
+    </div>
+    <p class="font-semibold text-sm mb-2">De qué sucursales</p>
+    <div class="space-y-2 text-sm mb-1">
+      <label class="flex items-center gap-2"><input type="radio" name="tgAlc" value="todas" class="w-4 h-4" ${sel ? "" : "checked"} onchange="$('tgOfis').classList.add('hidden')">Todas</label>
+      <label class="flex items-center gap-2"><input type="radio" name="tgAlc" value="algunas" class="w-4 h-4" ${sel ? "checked" : ""} onchange="$('tgOfis').classList.remove('hidden')">Solo estas:</label>
+    </div>
+    <div id="tgOfis" class="pl-6 space-y-1 text-sm mb-5 ${sel ? "" : "hidden"}">${(ofis || []).map(o => `<label class="flex items-center gap-2"><input type="checkbox" value="${o.id}" class="w-4 h-4" ${sel?.includes(o.id) ? "checked" : ""}>${esc(o.nombre)}</label>`).join("") || `<p class="text-slate-400">No hay sucursales.</p>`}</div>
+    <p class="text-xs text-slate-400 mb-4">Cada sucursal llega en un mensaje aparte. Los avisos se revisan cada 5 minutos.</p>
+    <div class="flex flex-wrap gap-2">
+      <button class="btn btn-pri" onclick="guardarAvisos()">Guardar</button>
+      <button class="btn btn-sec" onclick="probarTelegram()"><i class="fa-solid fa-paper-plane"></i>Mandar mensaje de prueba</button>
+      <button class="btn btn-dan" onclick="desconectarTelegram()">Desconectar</button>
+    </div></div>`;
+}
+async function conectarTelegram() {
+  try {
+    const r = await rpc("rl_telegram_codigo");
+    const link = `https://t.me/${r.bot}?start=${r.codigo}`;
+    window.open(link, "_blank", "noopener");
+    $("tgLink").innerHTML = `<div class="flex flex-wrap gap-4 items-center"><div class="qrbox" data-qr="${esc(link)}" data-size="150"></div>
+      <p class="text-sm text-slate-400 max-w-xs">¿No se abrió? Escaneá este código con el celular o <a class="text-sky-300 underline" href="${esc(link)}" target="_blank" rel="noopener">tocá acá</a>. El enlace vale 30 minutos.</p></div>`;
+    pintarQRs($("tgLink"));
+  } catch (e) { toast(errTxt(e), "error"); }
+}
+async function guardarAvisos() {
+  const algunas = document.querySelector('input[name="tgAlc"]:checked')?.value === "algunas";
+  const ofis = algunas ? [...document.querySelectorAll("#tgOfis input:checked")].map(i => i.value) : null;
+  if (algunas && !ofis.length) return toast("Elegí al menos una sucursal", "error");
+  try { await rpc("rl_telegram_preferencias", { p_oficinas: ofis, p_ausencias: $("tgAus").checked, p_tardanzas: $("tgTar").checked, p_rechazos: $("tgRech").checked }); toast("Avisos guardados"); }
+  catch (e) { toast(errTxt(e), "error"); }
+}
+async function probarTelegram() {
+  try { await tgFn({ accion: "probar" }); toast("Mensaje enviado: revisá Telegram"); } catch (e) { toast(errTxt(e), "error"); }
+}
+async function desconectarTelegram() {
+  if (!confirm("¿Dejar de recibir avisos en Telegram?")) return;
+  const { error } = await sb.from("telegram_destinos").delete().eq("user_id", S.user.id);
+  if (error) return toast(errTxt(error), "error");
+  toast("Telegram desconectado"); tabAvisos();
 }
 
 // ---- Tolerancia ----
