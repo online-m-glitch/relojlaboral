@@ -98,6 +98,7 @@ const ZONA = "America/Argentina/Buenos_Aires";
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, { auth: { persistSession: true, storageKey: "reloj_laboral_sesion" } });
 const qrParam = new URLSearchParams(location.search).get("qr");
+const portalParam = new URLSearchParams(location.search).has("portal");
 
 const S = { user: null, perfil: null, empresaId: null, empresa: null, tab: "panel", superTab: "empresas", baseUrl: "", cache: {} };
 
@@ -112,7 +113,7 @@ const esFullEmp = e => !!e && (e.plan === "full" || (e.plan === "demo" && e.demo
 const esFull = () => esFullEmp(S.empresa);
 // ---- Permisos: admin (o superadmin) = todo; encargado = lo que eligió el admin ----
 const SECCIONES = [["panel", "Panel"], ["oficinas", "Oficinas / QR"], ["colaboradores", "Colaboradores"], ["registros", "Registros"],
-  ["licencias", "Licencias", true], ["feriados", "Feriados", true], ["reportes", "Reportes", true], ["configuracion", "Configuración"]];
+  ["licencias", "Licencias", true], ["feriados", "Feriados", true], ["reportes", "Reportes", true], ["comunicados", "Comunicados", true], ["configuracion", "Configuración"]];
 const esAdmin = () => S.perfil?.rol === "superadmin" || S.perfil?.cargo !== "encargado";
 const perm = sec => esAdmin() ? "editar" : ((S.perfil?.permisos || {})[sec] || "no");
 const puedeVer = sec => perm(sec) !== "no";
@@ -328,6 +329,7 @@ function cargando(txt = "Cargando…") { return `<div class="flex-grow flex item
 // ================== ARRANQUE ==================
 async function init() {
   if (qrParam) return renderFichaje();
+  if (portalParam) return renderPortal();
   $("app").innerHTML = cargando();
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return renderLogin();
@@ -852,6 +854,7 @@ const TABS = [
   ["registros", "Registros", "fa-list-check", false, "registros"],
   ["ausencias", "Licencias", "fa-umbrella-beach", true, "licencias"],
   ["feriados", "Feriados", "fa-calendar-xmark", true, "feriados"],
+  ["comunicados", "Comunicados", "fa-bullhorn", true, "comunicados"],
   ["avisos", "Avisos Telegram", "fa-bell", true, "panel"],
   ["encargados", "Encargados", "fa-user-shield", false, "admin"],
   ["ajustes", "Configuración", "fa-gear", false, "configuracion"],
@@ -897,7 +900,7 @@ function renderEmpresa() {
   if (!vis.length) { $("empMain").innerHTML = `<div class="card p-8 max-w-md mx-auto text-center mt-10"><i class="fa-solid fa-lock text-3xl text-slate-400"></i>
     <h3 class="text-lg font-bold mt-3">Todavía no tenés secciones habilitadas</h3><p class="text-sm text-slate-400 mt-2">Pedile al administrador de tu empresa que te dé acceso.</p></div>`; return; }
   if (!vis.some(t => t[0] === S.tab)) S.tab = vis[0][0];
-  ({ encargados: tabEncargados, panel: tabPanel, oficinas: tabOficinas, colaboradores: tabColaboradores, registros: tabRegistros, ausencias: tabAusencias, feriados: tabFeriados, ajustes: tabAjustes, avisos: tabAvisos })[S.tab]();
+  ({ encargados: tabEncargados, panel: tabPanel, oficinas: tabOficinas, colaboradores: tabColaboradores, registros: tabRegistros, ausencias: tabAusencias, feriados: tabFeriados, ajustes: tabAjustes, avisos: tabAvisos, comunicados: tabComunicados })[S.tab]();
 }
 
 // ---- Panel ----
@@ -1262,6 +1265,8 @@ async function tabAusencias() {
   if (S.tab !== "ausencias" || !$("empMain")) return;
   if (error) return $("empMain").innerHTML = `<p class="text-red-400">${esc(error.message)}</p>`;
   S.cache.ausencias = data;
+  const pedidos = await pedidosPendientesHTML();
+  if (S.tab !== "ausencias" || !$("empMain")) return;
   const hoy = hoyISO();
   const estado = a => a.hasta < hoy ? ["Terminada", "bg-slate-600/40 text-slate-300"] : a.desde > hoy ? ["Próxima", "bg-indigo-500/15 text-indigo-200"] : ["En curso", "bg-sky-500/15 text-sky-200"];
   const dias = a => Math.round((new Date(a.hasta + "T12:00:00Z") - new Date(a.desde + "T12:00:00Z")) / 864e5) + 1;
@@ -1271,6 +1276,7 @@ async function tabAusencias() {
       ${puedeEditar("licencias") ? `<button class="btn btn-pri" onclick="abrirAusencia()"><i class="fa-solid fa-plus"></i>Cargar</button>` : ""}
     </div>
     <p class="text-sm text-slate-400 mb-5">Los días cargados no cuentan como falta ni piden fichaje. Se muestran las de los últimos 90 días y las próximas.</p>
+    ${pedidos}
     <div class="card overflow-x-auto"><table class="tbl"><thead><tr><th>Colaborador</th><th>Tipo</th><th>Desde</th><th>Hasta</th><th>Días</th><th>Estado</th><th>Nota</th><th></th></tr></thead><tbody>
       ${data.length ? data.map(a => { const t = TIPOS_AUS[a.tipo] || TIPOS_AUS.otro, e = estado(a);
         return `<tr><td class="font-medium">${esc(a.colaboradores?.nombre)}</td><td class="whitespace-nowrap">${t[1]} ${t[0]}</td>
@@ -1312,6 +1318,310 @@ async function borrarAusencia(id) {
   const { error } = await sb.from("ausencias").delete().eq("id", id);
   if (error) return toast(errTxt(error), "error");
   toast("Licencia borrada"); tabAusencias();
+}
+
+// ---- Comunicados (Full) ----
+const PRIORIDAD = { alta: ["Alta", "bg-red-500/15 text-red-300", "fa-angle-up"], normal: ["Normal", "bg-slate-600/40 text-slate-300", "fa-minus"], baja: ["Baja", "bg-sky-500/15 text-sky-200", "fa-angle-down"] };
+const linkPortal = () => (S.baseUrl || (location.origin + location.pathname)) + "?portal";
+async function tabComunicados() {
+  $("empMain").innerHTML = cargando();
+  let lista = [];
+  try { lista = await rpc("rl_comunicados_resumen") || []; } catch (e) { if ($("empMain")) $("empMain").innerHTML = `<p class="text-red-400">${esc(errTxt(e))}</p>`; return; }
+  if (S.tab !== "comunicados" || !$("empMain")) return;
+  S.cache.comunicados = lista;
+  const pend = lista.filter(m => m.leidos < m.total || (m.pide_confirmacion && m.comprendidos < m.total));
+  $("empMain").innerHTML = `
+    <div class="flex flex-wrap gap-3 justify-between items-center mb-1">
+      <h3 class="text-xl font-bold">Comunicados</h3>
+      ${puedeEditar("comunicados") ? `<button class="btn btn-pri" onclick="abrirComunicado()"><i class="fa-solid fa-plus"></i>Nuevo comunicado</button>` : ""}
+    </div>
+    <p class="text-sm text-slate-400 mb-4">Mandá avisos a tu equipo. Cada empleado los ve en su <b>portal del celular</b> y confirma que los leyó y los entendió.</p>
+    <div class="card p-4 mb-5 flex flex-wrap items-center gap-4">
+      <div class="qrbox shrink-0" data-qr="${esc(linkPortal())}" data-size="84"></div>
+      <div class="flex-1 min-w-[14rem]">
+        <p class="font-semibold text-sm"><i class="fa-solid fa-mobile-screen mr-1"></i>Portal del empleado</p>
+        <p class="text-xs text-slate-400 mt-1">Cada empleado entra desde <b>el mismo celular con el que ficha</b>, solo con su DNI. Ahí ve los comunicados, pide vacaciones o licencias y consulta sus fichajes.</p>
+        <p class="text-xs font-mono text-amber-300 mt-1 break-all">${esc(linkPortal())}</p>
+      </div>
+      <div class="flex gap-2"><button class="btn btn-sm btn-sec" onclick="navigator.clipboard.writeText('${esc(linkPortal())}').then(()=>toast('Link copiado'))"><i class="fa-solid fa-copy"></i>Copiar link</button>
+        <button class="btn btn-sm btn-sec" onclick="imprimirPortal()"><i class="fa-solid fa-print"></i>Imprimir cartel</button></div>
+    </div>
+    ${pend.length ? `<div class="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 text-sm text-amber-200 mb-5"><i class="fa-solid fa-circle-exclamation mr-1"></i><b>Hay comunicados que requieren seguimiento:</b> ${pend.length} con personas que todavía no los leyeron o no confirmaron.</div>` : ""}
+    <div class="space-y-3">${lista.length ? lista.map(m => { const p = PRIORIDAD[m.prioridad] || PRIORIDAD.normal;
+      const pct = m.total ? Math.round((m.pide_confirmacion ? m.comprendidos : m.leidos) * 100 / m.total) : 0;
+      return `<button class="card p-4 w-full text-left hover:border-indigo-500" onclick="verComunicado(${m.id})">
+        <div class="flex flex-wrap justify-between gap-2 items-start">
+          <div><p class="font-semibold">${esc(m.titulo)}</p><p class="text-xs text-slate-400">${fFecha(m.creado)} ${fHora(m.creado)} · ${esc(m.autor_nombre || "")} · ${m.oficinas ? `${m.oficinas.length} sucursal${m.oficinas.length === 1 ? "" : "es"}` : "Todas las sucursales"}</p></div>
+          <span class="badge ${p[1]}"><i class="fa-solid ${p[2]} mr-1"></i>${p[0]}</span>
+        </div>
+        <div class="flex items-center gap-3 mt-3 text-xs text-slate-300">
+          <div class="flex-1 h-2 rounded-full bg-[#DCEDE2] overflow-hidden"><div class="h-full bg-emerald-500" style="width:${pct}%"></div></div>
+          <span>👁 ${m.leidos}/${m.total} leyeron${m.pide_confirmacion ? ` · ✅ ${m.comprendidos} entendieron` : ""}</span>
+        </div></button>`; }).join("")
+      : `<div class="card p-8 text-center text-slate-400">Todavía no mandaste comunicados.</div>`}</div>`;
+  pintarQRs($("empMain"));
+}
+async function abrirComunicado() {
+  const { data: ofis } = await sb.from("oficinas").select("id, nombre").eq("empresa_id", S.empresaId).eq("activa", true).order("nombre");
+  abrirModal(`
+    <h3 class="text-lg font-bold mb-4">Nuevo comunicado</h3>
+    <div class="space-y-3">
+      <div><label class="lbl">Título</label><input id="cmTit" class="inp" maxlength="120" placeholder="Ej: Feriado del lunes"></div>
+      <div><label class="lbl">Mensaje</label><textarea id="cmCue" class="inp" rows="5" maxlength="4000" placeholder="Escribí el aviso para tu equipo"></textarea></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="lbl">Prioridad</label><select id="cmPri" class="inp"><option value="alta">🔺 Alta</option><option value="normal" selected>Normal</option><option value="baja">🔻 Baja</option></select></div>
+        <label class="flex items-center gap-2 text-sm mt-6"><input type="checkbox" id="cmConf" class="w-4 h-4" checked>Pedir que confirmen que lo entendieron</label>
+      </div>
+      <div><label class="lbl">Para</label>
+        <label class="flex items-center gap-2 text-sm"><input type="radio" name="cmAlc" value="todas" class="w-4 h-4" ${oficinasLimitadas() ? "" : "checked"} onchange="$('cmOfis').classList.add('hidden')">Todas ${oficinasLimitadas() ? "mis" : "las"} sucursales</label>
+        <label class="flex items-center gap-2 text-sm mt-1"><input type="radio" name="cmAlc" value="algunas" class="w-4 h-4" onchange="$('cmOfis').classList.remove('hidden')">Solo estas:</label>
+        <div id="cmOfis" class="hidden pl-6 mt-1 space-y-1 text-sm">${(ofis || []).map(o => `<label class="flex items-center gap-2"><input type="checkbox" value="${o.id}" class="w-4 h-4">${esc(o.nombre)}</label>`).join("")}</div>
+      </div>
+      <p id="cmErr" class="text-red-400 text-sm min-h-[1.25rem]"></p>
+      <div class="flex justify-end gap-2"><button class="btn btn-sec" onclick="cerrarModal()">Cancelar</button><button id="cmBtn" class="btn btn-pri" onclick="enviarComunicado()"><i class="fa-solid fa-paper-plane"></i>Enviar</button></div>
+    </div>`);
+  if (oficinasLimitadas()) document.querySelector('input[name="cmAlc"][value="todas"]').checked = true;
+}
+async function enviarComunicado() {
+  const algunas = document.querySelector('input[name="cmAlc"]:checked')?.value === "algunas";
+  const ofis = algunas ? [...document.querySelectorAll("#cmOfis input:checked")].map(i => i.value) : null;
+  if (!$("cmTit").value.trim()) return $("cmErr").textContent = "Poné un título.";
+  if (algunas && !ofis.length) return $("cmErr").textContent = "Elegí al menos una sucursal.";
+  $("cmBtn").disabled = true;
+  try {
+    await rpc("rl_comunicado_guardar", { p_titulo: $("cmTit").value.trim(), p_cuerpo: $("cmCue").value.trim(), p_prioridad: $("cmPri").value, p_confirmacion: $("cmConf").checked, p_oficinas: ofis });
+    cerrarModal(); toast("Comunicado enviado"); tabComunicados();
+  } catch (e) { $("cmErr").textContent = errTxt(e); $("cmBtn").disabled = false; }
+}
+async function verComunicado(id) {
+  const m = S.cache.comunicados.find(x => x.id === id);
+  abrirModal(cargando());
+  let dest = [];
+  try { dest = await rpc("rl_comunicado_destinatarios", { p_id: id }) || []; } catch (e) { toast(errTxt(e), "error"); }
+  const p = PRIORIDAD[m.prioridad] || PRIORIDAD.normal;
+  const estado = d => d.comprendido_at ? `<span class="text-emerald-300">✅ Entendido ${fFecha(d.comprendido_at)} ${fHora(d.comprendido_at)}</span>`
+    : d.leido_at ? `<span class="text-sky-200">👁 Leído ${fFecha(d.leido_at)} ${fHora(d.leido_at)}</span>` : `<span class="text-amber-300">⏳ Sin leer</span>`;
+  abrirModal(`
+    <div class="flex justify-between gap-2 items-start mb-1"><h3 class="text-lg font-bold">${esc(m.titulo)}</h3><span class="badge ${p[1]}">${p[0]}</span></div>
+    <p class="text-xs text-slate-400 mb-3">${fFecha(m.creado)} ${fHora(m.creado)} · ${esc(m.autor_nombre || "")}</p>
+    ${m.cuerpo ? `<div class="bg-slate-900 rounded-xl p-3 text-sm whitespace-pre-wrap mb-4">${esc(m.cuerpo)}</div>` : ""}
+    <p class="font-semibold text-sm mb-2">Quién lo vio (${m.leidos}/${m.total})</p>
+    <div class="max-h-72 overflow-y-auto divide-y divide-[#DCEDE2] text-sm">${dest.map(d => `<div class="flex justify-between gap-2 py-2"><span>${esc(d.nombre)} <span class="text-xs text-slate-400">${esc(d.oficina || "")}</span></span><span class="text-xs">${estado(d)}</span></div>`).join("") || `<p class="text-slate-400 py-2">No hay empleados activos en esas sucursales.</p>`}</div>
+    <div class="flex justify-between gap-2 mt-4">
+      ${puedeEditar("comunicados") ? `<button class="btn btn-dan" onclick="borrarComunicado(${id})"><i class="fa-solid fa-trash"></i>Borrar</button>` : "<span></span>"}
+      <button class="btn btn-pri" onclick="cerrarModal()">Cerrar</button></div>`);
+}
+async function borrarComunicado(id) {
+  if (!confirm("¿Borrar este comunicado? Desaparece del portal de los empleados.")) return;
+  try { await rpc("rl_comunicado_borrar", { p_id: id }); cerrarModal(); toast("Comunicado borrado"); tabComunicados(); } catch (e) { toast(errTxt(e), "error"); }
+}
+function imprimirPortal() {
+  const w = window.open("", "_blank");
+  if (!w) return toast("Permití las ventanas emergentes para imprimir", "error");
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Portal del empleado</title><script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"><\/script>
+    <style>body{font-family:Inter,Arial,sans-serif;text-align:center;padding:40px;color:#12261A}h1{font-size:34px;margin:0}p{font-size:18px;color:#3F5547}#q{display:inline-block;margin:30px 0}</style></head>
+    <body><p style="font-weight:700;color:#166534;letter-spacing:.1em">${esc(S.empresa?.nombre || "")}</p><h1>Tu portal del empleado</h1>
+    <p>Comunicados · Pedir vacaciones y licencias · Mis fichajes</p><div id="q"></div>
+    <p><b>Escanealo con el mismo celular con el que fichás</b> y entrá con tu DNI.</p>
+    <script>new QRCode(document.getElementById('q'),{text:${JSON.stringify(linkPortal())},width:280,height:280});setTimeout(()=>print(),600)<\/script></body></html>`);
+  w.document.close();
+}
+
+// ---- Pedidos de vacaciones / licencias (aparecen arriba en Licencias) ----
+async function pedidosPendientesHTML() {
+  const { data } = await sb.from("solicitudes").select("id, colaborador_id, tipo, desde, hasta, nota, tiene_adjunto, creado, colaboradores(nombre)")
+    .eq("empresa_id", S.empresaId).eq("estado", "pendiente").order("creado");
+  S.cache.pedidos = data || [];
+  if (!S.cache.pedidos.length) return "";
+  const dias = a => Math.round((new Date(a.hasta + "T12:00:00Z") - new Date(a.desde + "T12:00:00Z")) / 864e5) + 1;
+  return `<div class="card p-4 mb-5 border-amber-500/40 bg-amber-500/5">
+    <h4 class="font-bold text-amber-200 mb-3"><i class="fa-solid fa-inbox mr-1"></i>Pedidos desde el celular (${S.cache.pedidos.length})</h4>
+    <div class="space-y-2">${S.cache.pedidos.map(s => { const t = TIPOS_AUS[s.tipo] || TIPOS_AUS.otro;
+      return `<div class="flex flex-wrap items-center justify-between gap-2 bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2">
+        <div class="text-sm"><b>${esc(s.colaboradores?.nombre)}</b> · ${t[1]} ${t[0]} · ${fFecha(s.desde + "T12:00:00")}${s.hasta !== s.desde ? ` al ${fFecha(s.hasta + "T12:00:00")}` : ""} (${dias(s)} día${dias(s) === 1 ? "" : "s"})
+          ${s.nota ? `<p class="text-xs text-slate-300 mt-0.5">“${esc(s.nota)}”</p>` : ""}<p class="text-xs text-slate-400">Pedido el ${fFecha(s.creado)} ${fHora(s.creado)}</p></div>
+        <div class="flex gap-1">
+          ${s.tiene_adjunto ? `<button class="btn btn-sm btn-sec" onclick="verAdjunto(${s.id})"><i class="fa-solid fa-image"></i>Foto</button>` : ""}
+          ${puedeEditar("licencias") ? `<button class="btn btn-sm btn-dan" onclick="resolverPedido(${s.id}, false)">Rechazar</button>
+          <button class="btn btn-sm btn-pri" onclick="resolverPedido(${s.id}, true)">Aprobar</button>` : ""}
+        </div></div>`; }).join("")}</div>
+    <p class="text-xs text-slate-400 mt-2">Al aprobar, se carga sola como licencia. El empleado ve la respuesta en su portal.</p>
+  </div>`;
+}
+async function verAdjunto(id) {
+  abrirModal(cargando());
+  const { data, error } = await sb.from("solicitud_adjuntos").select("datos").eq("solicitud_id", id).maybeSingle();
+  if (error || !data) return abrirModal(`<p class="text-red-400">No se pudo cargar la foto.</p><div class="text-right mt-4"><button class="btn btn-pri" onclick="cerrarModal()">Cerrar</button></div>`);
+  abrirModal(`<img src="${esc(data.datos)}" class="w-full rounded-xl" alt="Adjunto del pedido"><div class="text-right mt-4"><button class="btn btn-pri" onclick="cerrarModal()">Cerrar</button></div>`);
+}
+async function resolverPedido(id, aprobar) {
+  const s = S.cache.pedidos.find(x => x.id === id);
+  const resp = prompt(`${aprobar ? "Aprobar" : "Rechazar"} el pedido de ${s?.colaboradores?.nombre || ""}.\nMensaje para el empleado (opcional):`, "");
+  if (resp === null) return;
+  try { await rpc("rl_solicitud_resolver", { p_id: id, p_aprobar: aprobar, p_respuesta: resp }); toast(aprobar ? "Pedido aprobado y licencia cargada" : "Pedido rechazado"); tabAusencias(); }
+  catch (e) { toast(errTxt(e), "error"); }
+}
+
+// ================== PORTAL DEL EMPLEADO (celular vinculado + DNI) ==================
+const PT = { get dni() { try { return localStorage.getItem("rl_portal_dni") || ""; } catch { return ""; } },
+  set dni(v) { try { v ? localStorage.setItem("rl_portal_dni", v) : localStorage.removeItem("rl_portal_dni"); } catch {} },
+  get emp() { try { return localStorage.getItem("rl_portal_emp") || ""; } catch { return ""; } },
+  set emp(v) { try { v ? localStorage.setItem("rl_portal_emp", v) : localStorage.removeItem("rl_portal_emp"); } catch {} },
+  datos: null, vista: "inicio" };
+function portalMarco(cuerpo, conMenu = true) {
+  const item = (k, ic, t, n) => `<button onclick="portalIr('${k}')" class="flex-1 flex flex-col items-center gap-0.5 py-2 text-xs ${PT.vista === k ? "text-indigo-300 font-semibold" : "text-slate-400"}">
+    <span class="relative"><i class="fa-solid ${ic} text-lg"></i>${n ? `<span class="absolute -top-1 -right-2 bg-red-500 text-white rounded-full text-[10px] px-1">${n}</span>` : ""}</span>${t}</button>`;
+  const sinLeer = (PT.datos?.comunicados || []).filter(c => !c.leido_at || (c.pide_confirmacion && !c.comprendido_at)).length;
+  $("app").innerHTML = `<div class="flex-grow flex flex-col max-w-md w-full mx-auto min-h-screen">
+    ${PT.datos ? `<div class="px-4 pt-5 pb-3"><p class="text-xs uppercase tracking-wider text-indigo-300 font-semibold">${esc(PT.datos.empresa)}</p>
+      <h1 class="text-xl font-bold">Hola, ${esc(PT.datos.nombre.split(" ")[0])}</h1>${PT.datos.oficina ? `<p class="text-xs text-slate-400">${esc(PT.datos.oficina)}</p>` : ""}</div>` : ""}
+    <div class="flex-grow px-4 pb-24">${cuerpo}</div>
+    ${conMenu ? `<nav class="fixed bottom-0 left-0 right-0 bg-slate-800 border-t border-slate-700"><div class="max-w-md mx-auto flex">
+      ${item("inicio", "fa-bullhorn", "Comunicados", sinLeer)}${item("pedidos", "fa-umbrella-beach", "Pedidos")}${item("fichajes", "fa-clock", "Mis fichajes")}${item("salir", "fa-right-from-bracket", "Salir")}
+    </div></nav>` : ""}</div>`;
+}
+async function renderPortal() {
+  if (!PT.dni) return portalLogin();
+  const r = await rpc("rl_portal_entrar", { p_dni: PT.dni, p_dispositivo: idDispositivo() }).catch(() => ({ ok: false, error: "Sin conexión. Probá de nuevo." }));
+  if (!r.ok) return portalLogin(r.error);
+  const emps = r.empresas;
+  if (!PT.emp || !emps.some(e => e.empresa_id === PT.emp)) {
+    if (emps.length > 1) return portalElegirEmpresa(emps);
+    PT.emp = emps[0].empresa_id;
+  }
+  const e = emps.find(x => x.empresa_id === PT.emp);
+  if (!e.full) return portalMarco(`<div class="card p-6 text-center mt-10"><div class="text-4xl mb-3">🔒</div><h2 class="font-bold text-lg">Portal no disponible</h2>
+    <p class="text-sm text-slate-400 mt-2">El portal del empleado es parte de la versión Full. Consultá con tu empresa.</p>
+    <button class="btn btn-sec mt-4" onclick="portalSalir()">Salir</button></div>`, false);
+  await portalCargar();
+}
+async function portalCargar() {
+  try { PT.datos = await rpc("rl_portal_datos", { p_dni: PT.dni, p_dispositivo: idDispositivo(), p_empresa: PT.emp }); }
+  catch (e) { PT.dni = ""; PT.emp = ""; return portalLogin(errTxt(e)); }
+  portalIr(PT.vista);
+}
+function portalLogin(error) {
+  portalMarco(`<div class="pt-12"><div class="text-center mb-6"><div class="w-16 h-16 mx-auto rounded-2xl bg-indigo-600/20 text-indigo-300 flex items-center justify-center text-3xl"><i class="fa-solid fa-mobile-screen"></i></div>
+    <h1 class="text-xl font-bold mt-3">Portal del empleado</h1><p class="text-sm text-slate-400 mt-1">Comunicados, pedidos de vacaciones y tus fichajes.</p></div>
+    <div class="card p-6"><label class="lbl" for="ptDni">Tu DNI</label>
+      <input id="ptDni" class="inp text-center text-2xl font-mono tracking-widest" inputmode="numeric" maxlength="10" placeholder="12345678" oninput="this.value=this.value.replace(/\\D/g,'')" onkeydown="if(event.key==='Enter')portalEntrar()">
+      <p id="ptErr" class="text-red-400 text-sm text-center min-h-[1.25rem] mt-2">${esc(error || "")}</p>
+      <button id="ptBtn" class="btn btn-pri w-full py-3 mt-1" onclick="portalEntrar()">Entrar</button>
+      <p class="text-xs text-slate-400 text-center mt-4">📱 Entrá desde <b>el mismo celular con el que fichás</b>. No hace falta contraseña.</p></div></div>`, false);
+}
+async function portalEntrar() {
+  const dni = $("ptDni").value.replace(/\D/g, "");
+  if (dni.length < 6) return $("ptErr").textContent = "Ingresá tu DNI completo.";
+  $("ptBtn").disabled = true; PT.dni = dni; PT.emp = "";
+  await renderPortal();
+}
+function portalElegirEmpresa(emps) {
+  portalMarco(`<div class="pt-12"><h2 class="text-lg font-bold mb-3 text-center">¿En qué empresa?</h2><div class="space-y-2">${emps.map(e =>
+    `<button class="card p-4 w-full text-left" onclick="PT.emp='${e.empresa_id}';renderPortal()"><b>${esc(e.empresa)}</b><p class="text-xs text-slate-400">${esc(e.nombre)}</p></button>`).join("")}</div></div>`, false);
+}
+function portalSalir() { if (!confirm("¿Salir del portal? La próxima vez vas a tener que poner tu DNI de nuevo.")) return; PT.dni = ""; PT.emp = ""; PT.datos = null; PT.vista = "inicio"; portalLogin(); }
+function portalIr(v) {
+  if (v === "salir") return portalSalir();
+  PT.vista = v;
+  if (v === "pedidos") return portalPedidos();
+  if (v === "fichajes") return portalFichajes();
+  portalComunicados();
+}
+function portalComunicados() {
+  const cs = PT.datos.comunicados;
+  const pend = cs.filter(c => !c.leido_at || (c.pide_confirmacion && !c.comprendido_at)).length;
+  portalMarco(`${pend ? `<div class="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 text-sm text-amber-200 mb-4"><i class="fa-solid fa-circle-exclamation mr-1"></i>Tenés <b>${pend}</b> comunicado${pend === 1 ? "" : "s"} para leer.</div>` : ""}
+    <div class="space-y-3">${cs.length ? cs.map(c => { const p = PRIORIDAD[c.prioridad] || PRIORIDAD.normal; const nuevo = !c.leido_at || (c.pide_confirmacion && !c.comprendido_at);
+      return `<button class="card p-4 w-full text-left ${nuevo ? "border-amber-500/60" : ""}" onclick="portalAbrirComunicado(${c.id})">
+        <div class="flex justify-between gap-2"><p class="font-semibold">${nuevo ? `<span class="inline-block w-2 h-2 rounded-full bg-amber-500 mr-1 align-middle"></span>` : ""}${esc(c.titulo)}</p><span class="badge ${p[1]} shrink-0"><i class="fa-solid ${p[2]}"></i></span></div>
+        <p class="text-xs text-slate-400 mt-1">${fFecha(c.creado)} · ${c.comprendido_at ? "✅ Entendido" : c.leido_at ? "👁 Leído" : "Sin leer"}</p></button>`; }).join("")
+      : `<div class="card p-8 text-center text-slate-400">No tenés comunicados.</div>`}</div>`);
+}
+async function portalAbrirComunicado(id) {
+  const c = PT.datos.comunicados.find(x => x.id === id);
+  if (!c.leido_at) { rpc("rl_portal_leer", { p_dni: PT.dni, p_dispositivo: idDispositivo(), p_empresa: PT.emp, p_comunicado: id, p_comprendido: false }).catch(() => {}); c.leido_at = new Date().toISOString(); }
+  const p = PRIORIDAD[c.prioridad] || PRIORIDAD.normal;
+  portalMarco(`<button class="text-sm text-indigo-300 mb-3" onclick="portalIr('inicio')"><i class="fa-solid fa-arrow-left mr-1"></i>Comunicados</button>
+    <div class="card p-5"><div class="flex justify-between gap-2"><h2 class="text-lg font-bold">${esc(c.titulo)}</h2><span class="badge ${p[1]} shrink-0">${p[0]}</span></div>
+      <p class="text-xs text-slate-400 mt-1">${fFecha(c.creado)} ${fHora(c.creado)}${c.autor ? ` · ${esc(c.autor)}` : ""}</p>
+      ${c.cuerpo ? `<p class="text-sm whitespace-pre-wrap mt-4">${esc(c.cuerpo)}</p>` : ""}
+      ${c.pide_confirmacion ? (c.comprendido_at ? `<p class="mt-5 text-sm text-emerald-300">✅ Confirmaste que lo entendiste el ${fFecha(c.comprendido_at)} a las ${fHora(c.comprendido_at)}.</p>`
+        : `<button class="btn btn-pri w-full py-3 mt-5" onclick="portalEntendido(${id})"><i class="fa-solid fa-check"></i>Lo leí y lo entendí</button>`) : ""}
+    </div>`);
+}
+async function portalEntendido(id) {
+  try { await rpc("rl_portal_leer", { p_dni: PT.dni, p_dispositivo: idDispositivo(), p_empresa: PT.emp, p_comunicado: id, p_comprendido: true }); }
+  catch (e) { return toast(errTxt(e), "error"); }
+  const c = PT.datos.comunicados.find(x => x.id === id); c.comprendido_at = new Date().toISOString();
+  toast("¡Gracias! Quedó registrado"); portalAbrirComunicado(id);
+}
+function portalPedidos() {
+  const ss = PT.datos.solicitudes;
+  const est = { pendiente: ["⏳ Esperando respuesta", "text-amber-300"], aprobada: ["✅ Aprobado", "text-emerald-300"], rechazada: ["❌ Rechazado", "text-red-300"], cancelada: ["Cancelado", "text-slate-400"] };
+  portalMarco(`<button class="btn btn-pri w-full py-3 mb-4" onclick="portalNuevoPedido()"><i class="fa-solid fa-plus"></i>Pedir vacaciones o licencia</button>
+    <div class="space-y-3">${ss.length ? ss.map(s => { const t = TIPOS_AUS[s.tipo] || TIPOS_AUS.otro, e = est[s.estado];
+      return `<div class="card p-4"><div class="flex justify-between gap-2"><p class="font-semibold">${t[1]} ${t[0]}</p><span class="text-xs ${e[1]}">${e[0]}</span></div>
+        <p class="text-sm text-slate-300">${fFecha(s.desde + "T12:00:00")}${s.hasta !== s.desde ? ` al ${fFecha(s.hasta + "T12:00:00")}` : ""}</p>
+        ${s.respuesta ? `<p class="text-xs text-slate-300 mt-1">💬 ${esc(s.respuesta)}${s.resuelto_por ? ` — ${esc(s.resuelto_por)}` : ""}</p>` : ""}
+        ${s.estado === "pendiente" ? `<button class="text-xs text-red-300 mt-2" onclick="portalCancelar(${s.id})">Cancelar pedido</button>` : ""}</div>`; }).join("")
+      : `<div class="card p-8 text-center text-slate-400">Todavía no hiciste pedidos.</div>`}</div>`);
+}
+function portalNuevoPedido() {
+  portalMarco(`<button class="text-sm text-indigo-300 mb-3" onclick="portalIr('pedidos')"><i class="fa-solid fa-arrow-left mr-1"></i>Pedidos</button>
+    <div class="card p-5 space-y-3"><h2 class="text-lg font-bold">Nuevo pedido</h2>
+      <div><label class="lbl">Tipo</label><select id="psTipo" class="inp">${Object.entries(TIPOS_AUS).map(([k, [t, ic]]) => `<option value="${k}">${ic} ${t}</option>`).join("")}</select></div>
+      <div class="grid grid-cols-2 gap-3"><div><label class="lbl">Desde</label><input id="psDesde" type="date" class="inp" value="${hoyISO()}"></div>
+        <div><label class="lbl">Hasta</label><input id="psHasta" type="date" class="inp" value="${hoyISO()}"></div></div>
+      <div><label class="lbl">Comentario (opcional)</label><textarea id="psNota" class="inp" rows="3" maxlength="1000" placeholder="Ej: viaje familiar"></textarea></div>
+      <div><label class="lbl">Foto del certificado (opcional)</label><input id="psFoto" type="file" accept="image/*" class="inp text-sm"></div>
+      <p id="psErr" class="text-red-400 text-sm min-h-[1.25rem]"></p>
+      <button id="psBtn" class="btn btn-pri w-full py-3" onclick="portalEnviarPedido()"><i class="fa-solid fa-paper-plane"></i>Enviar pedido</button></div>`);
+}
+function comprimirImagen(file, max = 1280, calidad = 0.72) {
+  return new Promise((res, rej) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => { const k = Math.min(1, max / Math.max(img.width, img.height)); const cv = document.createElement("canvas");
+      cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k); cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+      URL.revokeObjectURL(url); res(cv.toDataURL("image/jpeg", calidad)); };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("No se pudo leer la foto")); };
+    img.src = url;
+  });
+}
+async function portalEnviarPedido() {
+  const desde = $("psDesde").value, hasta = $("psHasta").value;
+  if (!desde || !hasta || hasta < desde) return $("psErr").textContent = "Revisá las fechas.";
+  $("psBtn").disabled = true; $("psErr").textContent = "";
+  let foto = null;
+  try { if ($("psFoto").files[0]) { foto = await comprimirImagen($("psFoto").files[0]); if (foto.length > 880000) foto = await comprimirImagen($("psFoto").files[0], 900, 0.6); } }
+  catch (e) { $("psBtn").disabled = false; return $("psErr").textContent = e.message; }
+  let r;
+  try { r = await rpc("rl_portal_solicitar", { p_dni: PT.dni, p_dispositivo: idDispositivo(), p_empresa: PT.emp, p_tipo: $("psTipo").value, p_desde: desde, p_hasta: hasta, p_nota: $("psNota").value.trim(), p_adjunto: foto }); }
+  catch (e) { r = { ok: false, error: errTxt(e) }; }
+  if (!r.ok) { $("psBtn").disabled = false; return $("psErr").textContent = r.error; }
+  toast("Pedido enviado. Te avisamos cuando lo respondan."); PT.vista = "pedidos"; portalCargar();
+}
+async function portalCancelar(id) {
+  if (!confirm("¿Cancelar este pedido?")) return;
+  try { await rpc("rl_portal_cancelar", { p_dni: PT.dni, p_dispositivo: idDispositivo(), p_empresa: PT.emp, p_solicitud: id }); toast("Pedido cancelado"); portalCargar(); }
+  catch (e) { toast(errTxt(e), "error"); }
+}
+function portalFichajes() {
+  const fs = PT.datos.fichajes;
+  const mes = hoyISO().slice(0, 7);
+  const delMes = fs.filter(f => f.fecha.slice(0, 7) === mes);
+  const min = delMes.reduce((a, f) => a + (f.minutos || 0), 0);
+  const tard = delMes.filter(f => f.tardanza > 0).length;
+  portalMarco(`<div class="grid grid-cols-3 gap-2 mb-4">
+      <div class="card p-3 text-center"><p class="text-xl font-bold">${delMes.length}</p><p class="text-[11px] text-slate-400">días este mes</p></div>
+      <div class="card p-3 text-center"><p class="text-xl font-bold">${fMinCorto(min)}</p><p class="text-[11px] text-slate-400">horas este mes</p></div>
+      <div class="card p-3 text-center"><p class="text-xl font-bold ${tard ? "text-amber-300" : ""}">${tard}</p><p class="text-[11px] text-slate-400">llegadas tarde</p></div></div>
+    <div class="card divide-y divide-[#DCEDE2]">${fs.length ? fs.map(f => `<div class="flex justify-between items-center gap-2 px-4 py-3 text-sm">
+        <div><p class="font-medium">${new Date(f.fecha + "T12:00:00").toLocaleDateString("es-AR", { weekday: "short", day: "numeric", month: "short" })}</p>
+          <p class="text-xs text-slate-400">${f.entrada} → ${f.salida || "<span class='text-sky-300'>trabajando</span>"}${f.pausa ? ` · pausa ${fMinCorto(f.pausa)}` : ""}</p></div>
+        <div class="text-right"><p class="font-semibold tabular-nums">${f.minutos != null ? fMinCorto(f.minutos) : "—"}</p>
+          ${f.tardanza > 0 ? `<p class="text-[11px] text-amber-300">tarde ${fMinCorto(f.tardanza)}</p>` : ""}${f.anticipada > 0 ? `<p class="text-[11px] text-orange-300">salió antes ${fMinCorto(f.anticipada)}</p>` : ""}</div></div>`).join("")
+      : `<p class="text-center text-slate-400 py-8">No hay fichajes en los últimos 45 días.</p>`}</div>
+    <p class="text-xs text-slate-400 text-center mt-3">Últimos 45 días. Si ves algo que no coincide, avisale a tu encargado.</p>`);
 }
 
 // ---- Feriados (Full) ----
@@ -1628,6 +1938,7 @@ async function renderFichaje() {
         </div>` : ""}
       </div>
       ${info.geo ? `<p id="geoNota" class="text-center text-xs text-slate-400 mt-4">📍 Para fichar tenés que estar en el lugar. Cuando el celular te pregunte por la ubicación, tocá <b>Permitir</b>.</p>` : ""}
+      ${info.pausas ? `<a href="${esc(location.pathname)}?portal" class="block text-center text-sm text-indigo-300 mt-4"><i class="fa-solid fa-mobile-screen mr-1"></i>Mi portal: comunicados, vacaciones y mis horas</a>` : ""}
       <p class="text-center text-xs text-slate-500 mt-2">RelojLaboral Pro</p>
     </div>
   </div>`;
@@ -1766,7 +2077,7 @@ async function fichar(tipo) {
 }
 
 // Sesión vencida o cerrada en otra pestaña
-sb.auth.onAuthStateChange((ev) => { if (ev === "SIGNED_OUT" && S.user && !qrParam) { S.user = null; renderLogin("Tu sesión terminó. Volvé a entrar."); } });
+sb.auth.onAuthStateChange((ev) => { if (ev === "SIGNED_OUT" && S.user && !qrParam && !portalParam) { S.user = null; renderLogin("Tu sesión terminó. Volvé a entrar."); } });
 
 init();
 </script>
