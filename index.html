@@ -82,6 +82,9 @@
   html body .bg-rose-600 { background:#FDE8E8; color:#991B1B; border:1px solid #F8C9C9; }
   html body .hover\:bg-rose-500:hover { background:#FBD5D5; }
   html body .bg-red-600 { background:#B91C1C; color:#fff; }
+  .ayuda-txt ol{list-style:decimal;padding-left:1.4rem}.ayuda-txt ul{list-style:disc;padding-left:1.4rem}
+  .ayuda-txt li{margin:.25rem 0}.ayuda-txt p+p,.ayuda-txt ol+p,.ayuda-txt ul+p,.ayuda-txt p+ul,.ayuda-txt p+ol{margin-top:.6rem}
+  details.group>summary::-webkit-details-marker{display:none}
 </style>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col">
@@ -760,7 +763,12 @@ function entrarEmpresa(id) {
 }
 function salirEmpresa() { S.empresaId = null; S.empresa = null; S.cache.colaboradores = null; S.cache.registros = null; S.filtroReg = null; clearInterval(S._refresco); renderSuper(); }
 
-function renderSuperConfig() {
+async function renderSuperConfig() {
+  if (!S.soporteCfg) {
+    const { data } = await sb.from("config").select("clave, valor").in("clave", ["soporte_whatsapp", "soporte_email", "soporte_horario"]);
+    S.soporteCfg = Object.fromEntries((data || []).map(r => [r.clave, r.valor]));
+    if (S.superTab !== "config" || !$("superMain")) return;
+  }
   $("superMain").innerHTML = `
     <div class="card p-6 max-w-2xl">
       <h3 class="text-lg font-bold mb-1">URL base de fichaje</h3>
@@ -772,6 +780,16 @@ function renderSuperConfig() {
         <button class="btn btn-pri" onclick="guardarBaseUrl()">Guardar</button>
       </div>
       <p class="text-xs text-slate-500 mt-3">Dirección actual de esta página: <span class="font-mono">${esc(location.origin + location.pathname)}</span></p>
+    </div>
+    <div class="card p-6 max-w-2xl mt-6">
+      <h3 class="text-lg font-bold mb-1"><i class="fa-solid fa-headset mr-1"></i>Datos de soporte</h3>
+      <p class="text-sm text-slate-400 mb-3">Se muestran a todas las empresas en <b>Ayuda</b>, con botón de WhatsApp y email.</p>
+      <div class="grid sm:grid-cols-2 gap-3">
+        <div><label class="lbl">WhatsApp (con código de país)</label><input id="spWa" class="inp" inputmode="tel" placeholder="5491112345678" value="${esc(S.soporteCfg?.soporte_whatsapp || "")}"></div>
+        <div><label class="lbl">Email</label><input id="spMail" type="email" class="inp" placeholder="soporte@tuempresa.com" value="${esc(S.soporteCfg?.soporte_email || "")}"></div>
+        <div class="sm:col-span-2"><label class="lbl">Horario de atención (opcional)</label><input id="spHor" class="inp" placeholder="Lunes a viernes de 9 a 18 h" value="${esc(S.soporteCfg?.soporte_horario || "")}"></div>
+      </div>
+      <button class="btn btn-pri mt-4" onclick="guardarSoporte()">Guardar</button>
     </div>
     <div class="card p-6 max-w-2xl mt-6">
       <h3 class="text-lg font-bold mb-1"><i class="fa-brands fa-telegram text-sky-400 mr-1"></i>Bot de Telegram (avisos Full)</h3>
@@ -858,12 +876,14 @@ const TABS = [
   ["avisos", "Avisos Telegram", "fa-bell", true, "panel"],
   ["encargados", "Encargados", "fa-user-shield", false, "admin"],
   ["ajustes", "Configuración", "fa-gear", false, "configuracion"],
+  ["ayuda", "Ayuda", "fa-circle-question", false, "*"],
 ];
-const tabsVisibles = () => TABS.filter(t => t[4] === "admin" ? esAdmin() : puedeVer(t[4]));
+const tabsVisibles = () => TABS.filter(t => t[4] === "*" ? true : t[4] === "admin" ? esAdmin() : puedeVer(t[4]));
 function irTab(k) {
   const t = tabsVisibles().find(x => x[0] === k);
   if (!t) return;
   if (t[3] && !esFull()) return upsell(t[1]);
+  if (k === "ayuda" && S.tab !== "ayuda") { S.ayudaQ = ""; S.ayudaCat = AYUDA_TAB_CAT[S.tab] || "inicio"; }
   S.tab = k; renderEmpresa();
 }
 function renderEmpresa() {
@@ -897,10 +917,10 @@ function renderEmpresa() {
   </div>`;
   clearInterval(S._refresco);
   const vis = tabsVisibles().filter(t => !(t[3] && !esFull()));
-  if (!vis.length) { $("empMain").innerHTML = `<div class="card p-8 max-w-md mx-auto text-center mt-10"><i class="fa-solid fa-lock text-3xl text-slate-400"></i>
+  if (!vis.some(t => t[4] !== "*") && S.tab !== "ayuda") { $("empMain").innerHTML = `<div class="card p-8 max-w-md mx-auto text-center mt-10"><i class="fa-solid fa-lock text-3xl text-slate-400"></i>
     <h3 class="text-lg font-bold mt-3">Todavía no tenés secciones habilitadas</h3><p class="text-sm text-slate-400 mt-2">Pedile al administrador de tu empresa que te dé acceso.</p></div>`; return; }
   if (!vis.some(t => t[0] === S.tab)) S.tab = vis[0][0];
-  ({ encargados: tabEncargados, panel: tabPanel, oficinas: tabOficinas, colaboradores: tabColaboradores, registros: tabRegistros, ausencias: tabAusencias, feriados: tabFeriados, ajustes: tabAjustes, avisos: tabAvisos, comunicados: tabComunicados })[S.tab]();
+  ({ encargados: tabEncargados, panel: tabPanel, oficinas: tabOficinas, colaboradores: tabColaboradores, registros: tabRegistros, ausencias: tabAusencias, feriados: tabFeriados, ajustes: tabAjustes, avisos: tabAvisos, comunicados: tabComunicados, ayuda: tabAyuda })[S.tab]();
 }
 
 // ---- Panel ----
@@ -1791,6 +1811,161 @@ async function borrarEncargado(uid) {
   if (!confirm(`¿Eliminar a ${u.nombre || u.email}? No va a poder entrar más.`)) return;
   try { await adminFn({ accion: "enc_eliminar", empresa_id: S.empresaId, user_id: uid }); toast("Encargado eliminado"); tabEncargados(); }
   catch (e) { toast(errTxt(e), "error"); }
+}
+
+// ---- Ayuda (todos los planes y usuarios) ----
+// [id, categoría, título, html, solo Full, pestaña relacionada]
+const AYUDA_CATS = [
+  ["inicio", "Primeros pasos", "fa-flag-checkered"], ["fichaje", "Fichaje", "fa-mobile-screen"], ["equipo", "Colaboradores y horarios", "fa-users"],
+  ["registros", "Registros y Excel", "fa-list-check"], ["licencias", "Licencias y feriados", "fa-umbrella-beach"], ["comunicacion", "Comunicados, portal y Telegram", "fa-bullhorn"],
+  ["encargados", "Encargados", "fa-user-shield"], ["planes", "Planes y cuenta", "fa-crown"], ["faq", "Problemas frecuentes", "fa-circle-question"]];
+const AYUDA_TAB_CAT = { panel: "inicio", oficinas: "fichaje", colaboradores: "equipo", registros: "registros", ausencias: "licencias", feriados: "licencias",
+  comunicados: "comunicacion", avisos: "comunicacion", encargados: "encargados", ajustes: "equipo" };
+const AYUDA = [
+  ["empezar", "inicio", "¿Por dónde empiezo?", `<ol>
+    <li><b>Cambiá tu contraseña</b>: la primera vez el sistema te la pide. Después la cambiás con <i>Cambiar mi clave</i>.</li>
+    <li><b>Revisá tus oficinas</b> en <i>Oficinas / QR</i>: cada oficina o sucursal tiene su propio código QR.</li>
+    <li><b>Cargá a tu equipo</b> en <i>Colaboradores</i>: nombre, DNI, oficina, horario y días de trabajo.</li>
+    <li><b>Imprimí el QR</b> de cada oficina y pegalo en la entrada, a la altura de la vista.</li>
+    <li><b>Hacé una prueba</b>: escaneá el QR con tu celular y fichá con un DNI cargado. Lo vas a ver al instante en el <i>Panel</i>.</li></ol>`],
+  ["panel", "inicio", "¿Qué muestra el Panel?", `<p>Es la foto del día, en tiempo real: quién está trabajando, quién está en pausa, las horas trabajadas, las <b>tardanzas</b>, las <b>salidas anticipadas</b> y quién tenía que venir y <b>todavía no fichó</b>. Más abajo está la lista de todos los fichajes del día.</p><p>Se actualiza solo; no hace falta recargar la página.</p>`],
+  ["clave", "inicio", "Cambiar mi contraseña", `<p>Tocá <b>Cambiar mi clave</b> (abajo del menú; en el celular, el botón <i>Clave</i>). Poné la actual y la nueva dos veces. Si te la olvidaste, pedile a tu proveedor que te genere una temporal.</p>`],
+
+  ["como-fichan", "fichaje", "¿Cómo fichan los empleados?", `<ol>
+    <li>Escanean el <b>QR de su oficina</b> con la cámara del celular (no hace falta instalar nada).</li>
+    <li>Se abre la página de fichaje: escriben su <b>DNI</b>.</li>
+    <li>Tocan <b>Entrada</b>, <b>Pausa</b> / <b>Regreso</b> (para el almuerzo) o <b>Salida</b>.</li></ol>
+    <p>Pueden guardar la página en la pantalla de inicio del celular para tenerla a mano. Si está mal el DNI o no corresponde, el sistema avisa y no registra nada.</p>`],
+  ["vinculado", "fichaje", "Celular vinculado: nadie ficha por otro", `<p>El <b>primer fichaje</b> de cada empleado deja su celular vinculado a su DNI. Desde ese momento:</p>
+    <ul><li>Ese DNI solo puede fichar desde <b>ese</b> celular.</li><li>Ese celular no puede fichar con el DNI de otra persona.</li></ul>
+    <p>Los intentos rechazados quedan registrados en <i>Registros</i>, al final de la página.</p>
+    <p><b>Si cambió de celular</b>: entrá a <i>Colaboradores</i>, abrí su ficha y tocá <b>Desvincular</b>. El próximo fichaje vincula el celular nuevo.</p>
+    <p><b>Si usan un celular o tablet compartido</b> para fichar, desactivá <i>Celular vinculado</i> en <i>Configuración</i>.</p>`],
+  ["ubicacion", "fichaje", "Geolocalización: fichar solo en el lugar", `<p>Con la geolocalización activa, el sistema solo deja fichar si el celular está dentro del radio de la oficina (por ejemplo, 150 metros). La ubicación de cada oficina la configura tu proveedor.</p>
+    <p>Si alguien intenta fichar lejos, se rechaza y queda registrado con la distancia.</p>`, true],
+  ["ubicacion-bloqueada", "fichaje", "\"No me deja fichar: pide ubicación\"", `<p>El celular tiene que <b>permitir la ubicación</b> para esa página. Si alguna vez tocaron <i>Bloquear</i>, el navegador lo recuerda:</p>
+    <ul><li><b>iPhone (Safari)</b>: tocar <b>aA</b> en la barra de direcciones → <b>Configuración del sitio web</b> → <b>Ubicación</b> → <b>Permitir</b>. Revisar también <i>Ajustes → Privacidad → Localización</i> (activada, y Safari en "Al usar la app").</li>
+    <li><b>Android (Chrome)</b>: tocar el ícono a la izquierda de la dirección → <b>Permisos</b> → <b>Ubicación</b> → <b>Permitir</b>. Revisar que la ubicación del celular esté encendida.</li></ul>
+    <p>La página de fichaje muestra estos pasos sola y tiene un botón <b>Reintentar</b>.</p>`, true],
+  ["lejos", "fichaje", "\"Dice que estoy lejos, pero estoy en la oficina\"", `<ul><li>Pedile que espere unos segundos al aire libre o cerca de una ventana y reintente: adentro el GPS es menos preciso.</li>
+    <li>Que tenga activada la <b>ubicación precisa</b> (en iPhone: <i>Ubicación exacta</i>).</li>
+    <li>Si pasa seguido, pedile a tu proveedor que agrande el radio de la oficina.</li></ul>`, true],
+  ["home-office", "fichaje", "Home office", `<p>En la ficha de cada colaborador podés habilitar <b>home office</b>: los días elegidos puede fichar desde la ubicación de su casa además de la oficina.</p>`, true],
+  ["qr", "fichaje", "Imprimir o reemplazar el QR", `<p>En <i>Oficinas / QR</i> tocá <b>Imprimir</b> en la oficina. Si se perdió o alguien lo fotografió y querés invalidarlo, pedile a tu proveedor que lo <b>regenere</b>: el QR viejo deja de funcionar y hay que imprimir el nuevo.</p>`],
+
+  ["alta", "equipo", "Cargar un colaborador", `<p>En <i>Colaboradores</i> → <b>Nuevo</b>. Completá nombre, <b>DNI</b> (es con lo que ficha), cargo y oficina, su <b>horario</b> de entrada y salida y los <b>días</b> que trabaja. Guardá y ya puede fichar.</p>`],
+  ["horario-dia", "equipo", "Un horario distinto algún día (ej. sábado medio día)", `<p>En la ficha del colaborador abrí <b>Horario distinto algún día</b> y cargá la entrada y la salida solo para ese día. Los demás días usan el horario general.</p>`, true],
+  ["tolerancia", "equipo", "Tolerancia de llegada", `<p>En <i>Configuración</i> elegís los minutos de margen. Llegar dentro de ese margen no cuenta como tardanza, e irse dentro de ese margen antes de la hora de salida no cuenta como salida anticipada.</p>`],
+  ["baja", "equipo", "Dar de baja a un colaborador", `<p>Abrí su ficha y cambiá el estado a <b>Inactiva</b>. Deja de poder fichar y no aparece como ausente, pero su historial queda guardado.</p>`],
+
+  ["ver-registros", "registros", "Ver y filtrar los fichajes", `<p>En <i>Registros</i> filtrás por <b>fechas</b> o por <b>colaborador</b>. Cada fila muestra entrada, salida, pausas, horas trabajadas, tardanza y salida anticipada.</p>`],
+  ["corregir", "registros", "Corregir un fichaje (se olvidó de fichar)", `<p>En <i>Registros</i>, tocá el <b>lápiz</b> de la fila y ajustá la hora. Si se olvidó de fichar la salida, cargala ahí.</p>`],
+  ["excel", "registros", "Exportar a Excel", `<p>En <i>Registros</i>, filtrá el período y tocá <b>Exportar</b>. Se descarga un archivo que abrís con Excel o Google Sheets para liquidar sueldos.</p>`],
+  ["rechazados", "registros", "Intentos rechazados", `<p>Al final de <i>Registros</i> están los intentos que el sistema no aceptó (DNI de otro celular, lejos de la oficina, etc.) con su motivo.</p>`],
+
+  ["cargar-licencia", "licencias", "Cargar vacaciones, enfermedad o francos", `<p>En <i>Licencias</i> → <b>Cargar</b>: elegí el colaborador, el tipo y las fechas. Esos días <b>no cuentan como falta</b> ni piden fichaje.</p>`, true],
+  ["pedidos", "licencias", "Pedidos desde el celular", `<p>Los empleados pueden pedir vacaciones o licencias desde su <b>portal</b> (con foto del certificado si hace falta). Aparecen arriba en <i>Licencias</i>: tocá <b>Aprobar</b> (se carga sola la licencia) o <b>Rechazar</b>, con un mensaje opcional. El empleado ve la respuesta en su portal.</p>`, true],
+  ["feriados", "licencias", "Feriados", `<p>Los <b>feriados nacionales</b> ya vienen cargados. En <i>Feriados</i> podés sumar días propios (por ejemplo, un cierre por inventario) y elegir si tu empresa respeta los feriados.</p>`, true],
+
+  ["comunicados", "comunicacion", "Mandar un comunicado", `<p>En <i>Comunicados</i> → <b>Nuevo comunicado</b>: título, mensaje, prioridad y a qué sucursales va. Si marcás <b>Pedir que confirmen</b>, cada empleado tiene que tocar <i>Lo leí y lo entendí</i>. Tocando el comunicado ves quién lo leyó y quién no.</p>`, true],
+  ["portal", "comunicacion", "Portal del empleado", `<p>Cada empleado entra al portal <b>desde el mismo celular con el que ficha</b>, solo con su DNI (sin contraseña). Ahí ve los comunicados, pide vacaciones o licencias y consulta sus fichajes y horas del mes.</p>
+    <p>El link y un cartel con QR para imprimir están en <i>Comunicados</i>. También aparece abajo en la pantalla de fichaje. Si nunca fichó, primero tiene que fichar una vez.</p>`, true],
+  ["telegram", "comunicacion", "Avisos por Telegram", `<p>En <i>Avisos Telegram</i> → <b>Conectar Telegram</b> y tocá <b>Iniciar</b> en el bot. Te llega un mensaje por sucursal cuando alguien no fichó a horario, llegó tarde, tuvo un intento rechazado o pidió una licencia. Podés elegir qué avisos y de qué sucursales.</p>`, true],
+
+  ["crear-encargado", "encargados", "Crear un encargado", `<p>En <i>Encargados</i> → <b>Nuevo encargado</b>: email, nombre y qué puede hacer en cada sección (<b>Sin acceso</b>, <b>Ver</b> o <b>Ver y editar</b>), y qué oficinas controla. Le pasás la contraseña temporal y la cambia al entrar.</p>`],
+  ["permisos", "encargados", "Cambiar permisos o la contraseña de un encargado", `<p>En <i>Encargados</i>, abrí el usuario: podés cambiar sus permisos y oficinas, generarle una contraseña nueva o eliminarlo.</p>`],
+
+  ["planes", "planes", "Standard o Full: ¿qué incluye cada uno?", `<p><b>Standard</b>: fichaje con QR y DNI, celular vinculado, horarios, tolerancia, panel en tiempo real, registros, correcciones, Excel y encargados.</p>
+    <p><b>Full</b> suma: geolocalización y home office, horario distinto por día, pausas, licencias y vacaciones, feriados, comunicados y portal del empleado, avisos por Telegram y, próximamente, reportes mensuales y horas extra.</p>
+    <p>Las funciones Full aparecen con un 🔒 en el menú si tu plan es Standard.</p>`],
+  ["prueba", "planes", "Prueba gratis y Full de regalo", `<p><b>Prueba gratis</b>: todo habilitado por unos días; al vencer, la cuenta se pausa hasta elegir un plan (tus datos no se pierden).</p>
+    <p><b>Full de regalo</b>: tenés todo lo de Full hasta la fecha indicada y después seguís en Standard, sin cortes. Los días que quedan se ven abajo del menú.</p>`],
+  ["pasar-full", "planes", "Pasar a la versión Full", `<p>Escribinos por los datos de contacto de esta página y lo activamos en el momento. Tus datos y configuraciones se mantienen.</p>`],
+
+  ["safari", "faq", "Un empleado de iPhone dice que el sistema no lo reconoce", `<p>Safari borra los datos de las páginas que no se usan por varios días o en modo privado. Si eso pasa, el celular queda como "nuevo": tocá <b>Desvincular</b> en su ficha y que vuelva a fichar. Para evitarlo, que no use modo privado y que guarde la página en la pantalla de inicio.</p>`],
+  ["no-aparece", "faq", "Fichó pero no aparece", `<p>Revisá que el DNI cargado sea el mismo que escribe (sin puntos) y que el colaborador esté <b>Activo</b>. Si le salió el cartel verde de <i>Entrada registrada</i>, aparece en el Panel; si no, el motivo está al final de <i>Registros</i>, en intentos rechazados.</p>`],
+  ["ausente-licencia", "faq", "Aparece como ausente pero estaba de vacaciones", `<p>Cargá esos días en <i>Licencias</i> y deja de figurar como ausente. Si era feriado, revisá en <i>Feriados</i> que tu empresa los respete.</p>`],
+];
+function tabAyuda() {
+  const cat = S.ayudaCat || "inicio";
+  const q = (S.ayudaQ || "").trim().toLowerCase();
+  const norm = s => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const lista = q ? AYUDA.filter(a => norm(a[2] + " " + a[3].replace(/<[^>]+>/g, " ")).includes(norm(q))) : AYUDA.filter(a => a[1] === cat);
+  const art = a => `<details class="card p-4 group" ${q || lista.length === 1 ? "open" : ""}>
+      <summary class="cursor-pointer font-semibold flex items-center gap-2 list-none"><i class="fa-solid fa-chevron-right text-xs text-slate-400 transition-transform group-open:rotate-90"></i>${esc(a[2])}${a[4] ? `<span class="badge bg-indigo-500/15 text-indigo-200 ml-auto">Full</span>` : ""}</summary>
+      <div class="ayuda-txt text-sm text-slate-300 mt-3 leading-relaxed">${a[3]}</div></details>`;
+  $("empMain").innerHTML = `
+    <div class="max-w-3xl">
+      <div class="flex flex-wrap justify-between items-center gap-3 mb-1"><h3 class="text-xl font-bold">Centro de ayuda</h3>
+        <button class="btn btn-sec" onclick="abrirManual()"><i class="fa-solid fa-book"></i>Manual de uso (PDF)</button></div>
+      <p class="text-sm text-slate-400 mb-4">Guías rápidas para usar RelojLaboral Pro. ¿No encontrás lo que buscás? Escribinos.</p>
+      <div class="relative mb-4"><i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"></i>
+        <input id="ayQ" class="inp" style="padding-left:2.4rem" placeholder="Buscar: QR, ubicación, Excel, vacaciones…" value="${esc(S.ayudaQ || "")}" oninput="S.ayudaQ=this.value;clearTimeout(S.ayT);S.ayT=setTimeout(()=>{tabAyuda();const i=$('ayQ');i.focus();i.setSelectionRange(i.value.length,i.value.length)},250)"></div>
+      ${q ? "" : `<div class="flex flex-wrap gap-2 mb-5">${AYUDA_CATS.map(([k, t, ic]) => `<button class="btn btn-sm ${k === cat ? "btn-pri" : "btn-sec"}" onclick="S.ayudaCat='${k}';tabAyuda()"><i class="fa-solid ${ic}"></i>${t}</button>`).join("")}</div>`}
+      <div class="space-y-2 mb-6">${lista.length ? lista.map(art).join("") : `<div class="card p-6 text-center text-slate-400">No encontramos nada con "${esc(S.ayudaQ)}". Probá con otra palabra o escribinos.</div>`}</div>
+      <div id="aySoporte"></div>
+    </div>`;
+  soporteHTML().then(h => { if ($("aySoporte")) $("aySoporte").innerHTML = h; });
+}
+async function soporteHTML() {
+  if (!S.soporte) {
+    const { data } = await sb.from("config").select("clave, valor").in("clave", ["soporte_whatsapp", "soporte_email", "soporte_horario"]);
+    S.soporte = Object.fromEntries((data || []).map(r => [r.clave, r.valor]));
+  }
+  const s = S.soporte, wa = (s.soporte_whatsapp || "").replace(/\D/g, "");
+  if (!wa && !s.soporte_email) return `<div class="card p-5"><p class="font-semibold"><i class="fa-solid fa-headset mr-1"></i>¿Necesitás ayuda?</p><p class="text-sm text-slate-400 mt-1">Comunicate con tu proveedor de RelojLaboral Pro.</p></div>`;
+  const msg = encodeURIComponent(`Hola, te escribo de ${S.empresa?.nombre || "mi empresa"} por RelojLaboral Pro: `);
+  return `<div class="card p-5 flex flex-wrap items-center gap-4 justify-between">
+    <div><p class="font-semibold"><i class="fa-solid fa-headset mr-1"></i>¿Necesitás ayuda?</p><p class="text-sm text-slate-400 mt-1">Escribinos y te ayudamos${s.soporte_horario ? ` · ${esc(s.soporte_horario)}` : ""}.</p></div>
+    <div class="flex flex-wrap gap-2">
+      ${wa ? `<a class="btn btn-pri" href="https://wa.me/${wa}?text=${msg}" target="_blank" rel="noopener"><i class="fa-brands fa-whatsapp"></i>WhatsApp</a>` : ""}
+      ${s.soporte_email ? `<a class="btn btn-sec" href="mailto:${esc(s.soporte_email)}?subject=${encodeURIComponent("Ayuda RelojLaboral Pro - " + (S.empresa?.nombre || ""))}"><i class="fa-solid fa-envelope"></i>${esc(s.soporte_email)}</a>` : ""}
+    </div></div>`;
+}
+async function guardarSoporte() {
+  const filas = [["soporte_whatsapp", $("spWa").value.replace(/[^\d+]/g, "")], ["soporte_email", $("spMail").value.trim()], ["soporte_horario", $("spHor").value.trim()]];
+  if (filas[1][1] && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(filas[1][1])) return toast("El email no es válido", "error");
+  const { error } = await sb.from("config").upsert(filas.map(([clave, valor]) => ({ clave, valor })));
+  if (error) return toast(errTxt(error), "error");
+  S.soporte = null; S.soporteCfg = Object.fromEntries(filas); toast("Datos de soporte guardados");
+}
+
+// Manual de uso completo: todas las guías juntas, listas para imprimir o guardar como PDF
+function abrirManual() {
+  const w = window.open("", "_blank");
+  if (!w) return toast("Permití las ventanas emergentes para abrir el manual", "error");
+  const full = esFull();
+  const cuerpo = AYUDA_CATS.map(([k, t], i) => {
+    const arts = AYUDA.filter(a => a[1] === k);
+    return `<section><h2>${i + 1}. ${esc(t)}</h2>${arts.map((a, j) => `<article><h3>${i + 1}.${j + 1} ${esc(a[2])}${a[4] ? ` <span class="full">Full</span>` : ""}</h3>${a[3]}</article>`).join("")}</section>`;
+  }).join("");
+  const indice = AYUDA_CATS.map(([k, t], i) => `<li><b>${i + 1}. ${esc(t)}</b><ul>${AYUDA.filter(a => a[1] === k).map((a, j) => `<li>${i + 1}.${j + 1} ${esc(a[2])}</li>`).join("")}</ul></li>`).join("");
+  w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Manual de uso · RelojLaboral Pro</title>
+    <style>
+      @page{margin:18mm 16mm}
+      body{font-family:Inter,Segoe UI,Arial,sans-serif;color:#12261A;line-height:1.5;max-width:760px;margin:0 auto;padding:24px;font-size:14px}
+      .tapa{min-height:85vh;display:flex;flex-direction:column;justify-content:center;border-bottom:3px solid #166534;margin-bottom:24px}
+      .tapa .m{color:#166534;font-weight:700;letter-spacing:.12em;text-transform:uppercase;font-size:13px}
+      .tapa h1{font-size:42px;margin:10px 0 6px}.tapa p{color:#3F5547;font-size:17px;margin:4px 0}
+      h2{color:#166534;font-size:22px;border-bottom:2px solid #DCEDE2;padding-bottom:6px;margin-top:34px;break-after:avoid}
+      section{break-before:page}section:first-of-type{break-before:auto}
+      h3{font-size:16px;margin:20px 0 6px;break-after:avoid}article{break-inside:avoid}
+      .full{font-size:11px;background:#DCFCE7;color:#166534;border-radius:99px;padding:2px 8px;vertical-align:middle}
+      ul,ol{padding-left:22px}li{margin:3px 0}.indice>li{margin-top:10px}.indice ul{color:#3F5547}
+      .barra{position:sticky;top:0;background:#F1F7F3;padding:10px;border-radius:10px;text-align:center;margin-bottom:16px}
+      .barra button{background:#166534;color:#fff;border:0;border-radius:8px;padding:9px 16px;font-weight:600;cursor:pointer;font-size:14px}
+      @media print{.barra{display:none}body{padding:0}}
+    </style></head><body>
+    <div class="barra"><button onclick="print()">🖨️ Imprimir o guardar como PDF</button></div>
+    <div class="tapa"><div class="m">RelojLaboral Pro</div><h1>Manual de uso</h1>
+      <p>Control de asistencia con QR desde el celular</p>
+      <p style="margin-top:24px">${esc(S.empresa?.nombre || "")}${S.empresa ? ` · Plan ${full ? "Full" : "Standard"}` : ""}</p>
+      <p style="font-size:13px">Actualizado al ${new Date().toLocaleDateString("es-AR")}</p>
+      ${full ? "" : `<p style="font-size:13px;margin-top:18px">Las secciones marcadas <span class="full">Full</span> son de la versión Full.</p>`}</div>
+    <h2>Contenido</h2><ol class="indice" style="list-style:none;padding:0">${indice}</ol>
+    ${cuerpo}
+    </body></html>`);
+  w.document.close();
 }
 
 // ---- Avisos por Telegram (Full) ----
