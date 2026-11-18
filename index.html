@@ -145,7 +145,6 @@ function upsell(funcion) {
         <li><i class="fa-solid fa-check text-emerald-400 mr-2"></i>Home office con ubicación propia</li>
         <li><i class="fa-solid fa-check text-emerald-400 mr-2"></i>Licencias, vacaciones y francos</li>
         <li><i class="fa-solid fa-check text-emerald-400 mr-2"></i>Feriados nacionales automáticos</li>
-        <li><i class="fa-solid fa-check text-emerald-400 mr-2"></i>Horario distinto según el día</li>
         <li><i class="fa-solid fa-check text-emerald-400 mr-2"></i>Pausas y almuerzo descontados</li>
         <li><i class="fa-solid fa-check text-emerald-400 mr-2"></i>Reporte mensual y horas extra (próximamente)</li>
         <li><i class="fa-solid fa-check text-emerald-400 mr-2"></i>Avisos por Telegram por sucursal</li>
@@ -938,7 +937,7 @@ async function tabPanel() {
       const dow = dowHoy(), ahora = minutosAhora(), tol = S.empresa.tolerancia_min || 0;
       const ficharon = new Set((hoy || []).map(x => x.colaborador_id));
       const licHoy = new Map((ausHoy || []).map(a => [a.colaborador_id, a]));
-      const horaDelDia = c => (esFull() && c.horario_dias?.[dow]) ? { hora_entrada: c.horario_dias[dow].e, hora_salida: c.horario_dias[dow].s } : c;
+      const horaDelDia = c => (c.horario_dias?.[dow]) ? { hora_entrada: c.horario_dias[dow].e, hora_salida: c.horario_dias[dow].s } : c;
       const faltan = r.feriado ? [] : (cols || []).filter(c => (c.dias || []).map(Number).includes(dow) && !ficharon.has(c.id) && !licHoy.has(c.id)).map(c => ({ ...c, ...horaDelDia(c) }));
       const deLicencia = (cols || []).filter(c => licHoy.has(c.id));
       const minDe = t => { const [h, m] = String(t).split(":").map(Number); return h * 60 + m; };
@@ -1054,7 +1053,7 @@ function pintarColaboradores() {
 }
 function abrirColaborador(id) {
   const E = S.empresa || {};
-  const c = id ? S.cache.colaboradores.find(x => x.id === id) : { nombre: "", dni: "", cargo: "", estado: "Activa", hora_entrada: hm(E.std_entrada || "09:00"), hora_salida: hm(E.std_salida || "18:00"), dias: E.std_dias || [1, 2, 3, 4, 5], horario_dias: esFull() ? (E.std_horario_dias || {}) : {}, horario_general: true, remoto_activo: false, remoto_dias: [1, 2, 3, 4, 5, 6, 7], remoto_radio_m: 150, remoto_direccion: "" };
+  const c = id ? S.cache.colaboradores.find(x => x.id === id) : { nombre: "", dni: "", cargo: "", estado: "Activa", hora_entrada: hm(E.std_entrada || "09:00"), hora_salida: hm(E.std_salida || "18:00"), dias: E.std_dias || [1, 2, 3, 4, 5], horario_dias: E.std_horario_dias || {}, horario_general: true, remoto_activo: false, remoto_dias: [1, 2, 3, 4, 5, 6, 7], remoto_radio_m: 150, remoto_direccion: "" };
   const dias = (c.dias || []).map(Number), diasR = (c.remoto_dias || [1, 2, 3, 4, 5, 6, 7]).map(Number);
   const ofi = (S.cache.oficinasEmp || []).find(o => o.activa);
   const linkPersonal = ofi ? linkQR(ofi.qr_token) : "";
@@ -1085,7 +1084,7 @@ function abrirColaborador(id) {
         ${(S.cache.oficinasEmp || []).map(o => `<option value="${o.id}" ${o.id === c.oficina_id ? "selected" : ""}>${esc(o.nombre)}</option>`).join("")}
       </select><p class="text-xs text-slate-400 mt-1">Define qué encargados ven a esta persona. Puede fichar en cualquier oficina.</p></div>
       <label class="flex items-start gap-2 text-sm cursor-pointer bg-slate-900/60 rounded-xl px-3 py-2"><input type="checkbox" id="cGen" class="w-4 h-4 mt-0.5" ${c.horario_general ? "checked" : ""} onchange="usarHorarioGeneral(this.checked)">
-        <span><b>Usa el horario general</b> de la empresa: ${hm(E.std_entrada || "09:00")} a ${hm(E.std_salida || "18:00")}, ${fDias(E.std_dias || [1, 2, 3, 4, 5])}${esFull() && Object.keys(E.std_horario_dias || {}).length ? ` · ${hdCorto(E.std_horario_dias)}` : ""}.<br><span class="text-xs text-slate-400">Desmarcalo para ponerle un horario personalizado.</span></span></label>
+        <span><b>Usa el horario general</b> de la empresa: ${hm(E.std_entrada || "09:00")} a ${hm(E.std_salida || "18:00")}, ${fDias(E.std_dias || [1, 2, 3, 4, 5])}${Object.keys(E.std_horario_dias || {}).length ? ` · ${hdCorto(E.std_horario_dias)}` : ""}.<br><span class="text-xs text-slate-400">Desmarcalo para ponerle un horario personalizado.</span></span></label>
       <div class="grid grid-cols-2 gap-3">
         <div><label class="lbl">Hora de entrada</label><input id="cHE" type="time" class="inp" value="${hm(c.hora_entrada)}"></div>
         <div><label class="lbl">Hora de salida</label><input id="cHS" type="time" class="inp" value="${hm(c.hora_salida)}"></div>
@@ -1101,12 +1100,11 @@ function abrirColaborador(id) {
         </div>
       </div>
       <details class="bg-slate-900/60 rounded-xl px-3 py-2" ${Object.keys(c.horario_dias || {}).length ? "open" : ""}>
-        <summary class="cursor-pointer text-sm font-semibold">Horario distinto algún día ${esFull() ? "" : `<i class="fa-solid fa-lock text-xs text-slate-500 ml-1"></i>`}</summary>
-        ${esFull() ? `<p class="text-xs text-slate-400 mt-2 mb-2">Dejá vacío el día que usa el horario general. Ej.: sábado de 09:00 a 13:00.</p>
+        <summary class="cursor-pointer text-sm font-semibold">Horario distinto algún día</summary>
+        <p class="text-xs text-slate-400 mt-2 mb-2">Dejá vacío el día que usa el horario de arriba. Ej.: sábado de 09:00 a 13:00.</p>
         <div class="space-y-1.5">${DIAS.map(([d, , nom]) => { const h = (c.horario_dias || {})[d] || {};
           return `<div class="grid grid-cols-[6rem_1fr_1fr] gap-2 items-center text-sm"><span class="text-slate-300">${nom}</span>
-            <input id="hdE${d}" type="time" class="inp !py-1.5" value="${h.e || ""}" aria-label="Entrada ${nom}"><input id="hdS${d}" type="time" class="inp !py-1.5" value="${h.s || ""}" aria-label="Salida ${nom}"></div>`; }).join("")}</div>`
-        : `<p class="text-xs text-slate-400 mt-2">Disponible en la versión Full. <button type="button" class="text-indigo-300 underline" onclick="upsell('El horario distinto por día')">Ver más</button></p>`}
+            <input id="hdE${d}" type="time" class="inp !py-1.5" value="${h.e || ""}" aria-label="Entrada ${nom}"><input id="hdS${d}" type="time" class="inp !py-1.5" value="${h.s || ""}" aria-label="Salida ${nom}"></div>`; }).join("")}</div>
       </details>
       <div><label class="lbl">Estado</label><select id="cEst" class="inp"><option ${c.estado === "Activa" ? "selected" : ""}>Activa</option><option ${c.estado === "Inactiva" ? "selected" : ""}>Inactiva</option></select></div>
       ${id ? `<div class="flex flex-wrap items-center justify-between gap-2 bg-slate-900/60 rounded-xl px-3 py-2 text-sm">
@@ -1352,7 +1350,7 @@ async function confirmarImportacion() {
   const rows = ok.map(f => ({ empresa_id: S.empresaId, nombre: f.nombre, dni: f.dni, cargo: f.cargo || "", estado: "Activa", oficina_id: f.oficina_id || null,
     fecha_ingreso: f.fecha_ingreso || null, fecha_nacimiento: f.fecha_nacimiento || null, horario_general: !!f.horario_general,
     hora_entrada: f.horario_general ? hm(E.std_entrada || "09:00") : f.hora_entrada, hora_salida: f.horario_general ? hm(E.std_salida || "18:00") : f.hora_salida,
-    dias: f.horario_general ? (E.std_dias || [1, 2, 3, 4, 5]).map(Number) : f.dias, horario_dias: f.horario_general && esFull() ? (E.std_horario_dias || {}) : {} }));
+    dias: f.horario_general ? (E.std_dias || [1, 2, 3, 4, 5]).map(Number) : f.dias, horario_dias: f.horario_general ? (E.std_horario_dias || {}) : {} }));
   $("impBtn").disabled = true; $("impBtn").textContent = "Cargando…";
   let cargados = 0; const fallas = [];
   for (let i = 0; i < rows.length; i += 100) {
@@ -1382,7 +1380,7 @@ async function guardarColaborador(id) {
   if (!fila.dias.length) return $("cErr").textContent = "Marcá al menos un día de trabajo.";
   fila.oficina_id = $("cOfi").value || null;
   if (oficinasLimitadas() && !fila.oficina_id) return $("cErr").textContent = "Elegí la oficina principal.";
-  if (esFull()) {
+  {
     const hd = {};
     for (const [d, , nom] of DIAS) {
       const e = $("hdE" + d).value, sl = $("hdS" + d).value;
@@ -2104,7 +2102,7 @@ const AYUDA = [
     <p>En cada colaborador, <b>"Usa el horario general"</b> viene marcado: si cambiás el horario general, se actualiza en todos ellos. Para alguien con otro horario, desmarcalo en su ficha y cargale el suyo.</p>`],
   ["fechas", "equipo", "Cumpleaños y fecha de ingreso", `<p>En la ficha de cada colaborador podés cargar, si querés, su <b>cumpleaños</b> y su <b>fecha de ingreso</b>. Con la fecha de ingreso se calcula sola la <b>antigüedad</b>.</p>
     <p>En el <i>Panel</i> aparecen las fechas especiales de la semana (cumpleaños y aniversarios en la empresa), y en el portal del empleado lo saludamos el día de su cumpleaños.</p>`],
-  ["horario-dia", "equipo", "Un horario distinto algún día (ej. sábado medio día)", `<p>En la ficha del colaborador abrí <b>Horario distinto algún día</b> y cargá la entrada y la salida solo para ese día. Los demás días usan el horario general.</p>`, true],
+  ["horario-dia", "equipo", "Un horario distinto algún día (ej. sábado medio día)", `<p>En la ficha del colaborador abrí <b>Horario distinto algún día</b> y cargá la entrada y la salida solo para ese día. Los demás días usan el horario general.</p>`],
   ["tolerancia", "equipo", "Tolerancia de llegada", `<p>En <i>Configuración</i> elegís los minutos de margen. Llegar dentro de ese margen no cuenta como tardanza, e irse dentro de ese margen antes de la hora de salida no cuenta como salida anticipada.</p>`],
   ["baja", "equipo", "Dar de baja a un colaborador", `<p>Abrí su ficha y cambiá el estado a <b>Inactiva</b>. Deja de poder fichar y no aparece como ausente, pero su historial queda guardado.</p>`],
 
@@ -2125,8 +2123,8 @@ const AYUDA = [
   ["crear-encargado", "encargados", "Crear un encargado", `<p>En <i>Encargados</i> → <b>Nuevo encargado</b>: email, nombre y qué puede hacer en cada sección (<b>Sin acceso</b>, <b>Ver</b> o <b>Ver y editar</b>), y qué oficinas controla. Le pasás la contraseña temporal y la cambia al entrar.</p>`],
   ["permisos", "encargados", "Cambiar permisos o la contraseña de un encargado", `<p>En <i>Encargados</i>, abrí el usuario: podés cambiar sus permisos y oficinas, generarle una contraseña nueva o eliminarlo.</p>`],
 
-  ["planes", "planes", "Standard o Full: ¿qué incluye cada uno?", `<p><b>Standard</b>: fichaje con QR y DNI, celular vinculado, horarios, tolerancia, panel en tiempo real, registros, correcciones, Excel y encargados.</p>
-    <p><b>Full</b> suma: geolocalización y home office, horario distinto por día, pausas, licencias y vacaciones, feriados, comunicados y portal del empleado, avisos por Telegram y, próximamente, reportes mensuales y horas extra.</p>
+  ["planes", "planes", "Standard o Full: ¿qué incluye cada uno?", `<p><b>Standard</b>: fichaje con QR y DNI, celular vinculado, horarios (con horario distinto por día), tolerancia, panel en tiempo real, registros, correcciones, Excel y encargados.</p>
+    <p><b>Full</b> suma: geolocalización y home office, pausas, licencias y vacaciones, feriados, comunicados y portal del empleado, avisos por Telegram y, próximamente, reportes mensuales y horas extra.</p>
     <p>Las funciones Full aparecen con un 🔒 en el menú si tu plan es Standard.</p>`],
   ["prueba", "planes", "Prueba gratis y Full de regalo", `<p><b>Prueba gratis</b>: todo habilitado por unos días; al vencer, la cuenta se pausa hasta elegir un plan (tus datos no se pierden).</p>
     <p><b>Full de regalo</b>: tenés todo lo de Full hasta la fecha indicada y después seguís en Standard, sin cortes. Los días que quedan se ven abajo del menú.</p>`],
@@ -2322,12 +2320,11 @@ function tabAjustes() {
       <label class="lbl mt-3">Días de trabajo</label>
       <div class="flex flex-wrap gap-1.5" id="stDias">${chipsDiasHTML((e.std_dias || [1, 2, 3, 4, 5]).map(Number), !puedeEditar("configuracion"))}</div>
       <details class="bg-slate-900/60 rounded-xl px-3 py-2 mt-3" ${Object.keys(e.std_horario_dias || {}).length ? "open" : ""}>
-        <summary class="cursor-pointer text-sm font-semibold">Horario distinto algún día ${esFull() ? "" : `<i class="fa-solid fa-lock text-xs text-slate-500 ml-1"></i>`}</summary>
-        ${esFull() ? `<p class="text-xs text-slate-400 mt-2 mb-2">Dejá vacío el día que usa el horario de arriba. Ej.: sábado de 09:00 a 13:00.</p>
+        <summary class="cursor-pointer text-sm font-semibold">Horario distinto algún día</summary>
+        <p class="text-xs text-slate-400 mt-2 mb-2">Dejá vacío el día que usa el horario de arriba. Ej.: sábado de 09:00 a 13:00.</p>
         <div class="space-y-1.5">${DIAS.map(([d, , nom]) => { const h = (e.std_horario_dias || {})[d] || {};
           return `<div class="grid grid-cols-[6rem_1fr_1fr] gap-2 items-center text-sm"><span class="text-slate-300">${nom}</span>
-            <input id="sdE${d}" type="time" class="inp !py-1.5" value="${h.e || ""}" aria-label="Entrada ${nom}" ${ed}><input id="sdS${d}" type="time" class="inp !py-1.5" value="${h.s || ""}" aria-label="Salida ${nom}" ${ed}></div>`; }).join("")}</div>`
-        : `<p class="text-xs text-slate-400 mt-2">Disponible en la versión Full. <button type="button" class="text-indigo-300 underline" onclick="upsell('El horario distinto por día')">Ver más</button></p>`}
+            <input id="sdE${d}" type="time" class="inp !py-1.5" value="${h.e || ""}" aria-label="Entrada ${nom}" ${ed}><input id="sdS${d}" type="time" class="inp !py-1.5" value="${h.s || ""}" aria-label="Salida ${nom}" ${ed}></div>`; }).join("")}</div>
       </details>
       <p class="text-xs text-slate-400 mt-3" id="stUsan"></p>
       <h3 class="text-lg font-bold mt-7 mb-1">Cargos</h3>
@@ -2378,7 +2375,7 @@ async function guardarEstandar() {
   if (!ent || !sal || ent === sal) return toast("Revisá la entrada y la salida del horario general", "error");
   if (!dias.length) return toast("Marcá al menos un día", "error");
   const hd = {};
-  if (esFull()) for (const [d, , nom] of DIAS) {
+  for (const [d, , nom] of DIAS) {
     const he = $("sdE" + d).value, hs = $("sdS" + d).value;
     if (!he && !hs) continue;
     if (!he || !hs) return toast(`Completá entrada y salida del ${nom.toLowerCase()} (o dejá los dos vacíos)`, "error");
