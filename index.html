@@ -1033,7 +1033,7 @@ async function tabColaboradores() {
   $("empMain").innerHTML = `
     <div class="flex flex-wrap gap-3 justify-between items-center mb-4">
       <h3 class="text-xl font-bold">Colaboradores <span class="text-sm text-slate-400 font-normal">(${data.filter(c => c.estado === "Activa").length} activos)</span></h3>
-      <div class="flex gap-2"><input id="colBuscar" class="inp !w-56" placeholder="Buscar nombre, DNI o cargo" oninput="pintarColaboradores()">${puedeEditar("colaboradores") ? `<button class="btn btn-pri" onclick="abrirColaborador()"><i class="fa-solid fa-plus"></i>Nuevo</button>` : ""}</div>
+      <div class="flex gap-2"><input id="colBuscar" class="inp !w-56" placeholder="Buscar nombre, DNI o cargo" oninput="pintarColaboradores()">${puedeEditar("colaboradores") ? `<button class="btn btn-sec" onclick="abrirImportar()"><i class="fa-solid fa-file-excel"></i>Importar Excel</button><button class="btn btn-pri" onclick="abrirColaborador()"><i class="fa-solid fa-plus"></i>Nuevo</button>` : ""}</div>
     </div>
     <div class="card overflow-x-auto"><table class="tbl"><thead><tr><th>Nombre</th><th>DNI</th><th>Cargo</th><th>Horario</th><th>Días</th><th>Celular</th><th>Remoto</th><th>Estado</th><th></th></tr></thead><tbody id="colBody"></tbody></table></div>`;
   pintarColaboradores();
@@ -1042,8 +1042,8 @@ function pintarColaboradores() {
   const q = ($("colBuscar")?.value || "").toLowerCase().trim();
   const lista = S.cache.colaboradores.filter(c => !q || [c.nombre, c.dni, c.cargo].some(v => String(v).toLowerCase().includes(q)));
   $("colBody").innerHTML = lista.length ? lista.map(c => `
-    <tr class="${c.estado === "Activa" ? "" : "opacity-50"}"><td class="font-medium">${esc(c.nombre)}${c.oficina_id ? `<p class="text-xs text-slate-400 font-normal"><i class="fa-solid fa-location-dot mr-1"></i>${esc((S.cache.oficinasEmp || []).find(o => o.id === c.oficina_id)?.nombre || "")}</p>` : ""}</td><td class="font-mono">${esc(c.dni)}</td><td>${esc(c.cargo)}</td>
-    <td class="whitespace-nowrap">${fHorario(c)}${Object.keys(c.horario_dias || {}).length ? `<p class="text-xs text-indigo-300">${Object.entries(c.horario_dias).sort().map(([d, h]) => `${DIAS[d - 1][1]} ${h.e}–${h.s}`).join(" · ")}</p>` : ""}</td><td class="whitespace-nowrap">${fDias(c.dias)}</td>
+    <tr class="${c.estado === "Activa" ? "" : "opacity-50"}"><td class="font-medium"><div class="flex items-center gap-3">${avatarColab(c, 36)}<div>${esc(c.nombre)}${c.oficina_id ? `<p class="text-xs text-slate-400 font-normal"><i class="fa-solid fa-location-dot mr-1"></i>${esc((S.cache.oficinasEmp || []).find(o => o.id === c.oficina_id)?.nombre || "")}</p>` : ""}</div></div></td><td class="font-mono">${esc(c.dni)}</td><td>${esc(c.cargo)}</td>
+    <td class="whitespace-nowrap">${fHorario(c)}${c.horario_general ? `<p class="text-xs text-slate-400">Horario general</p>` : ""}${Object.keys(c.horario_dias || {}).length ? `<p class="text-xs text-indigo-300">${Object.entries(c.horario_dias).sort().map(([d, h]) => `${DIAS[d - 1][1]} ${h.e}–${h.s}`).join(" · ")}</p>` : ""}</td><td class="whitespace-nowrap">${fDias(c.dias)}</td>
     <td class="whitespace-nowrap">${c.dispositivo_hash ? `<span class="badge bg-emerald-500/15 text-emerald-300" title="Vinculado el ${fFecha(c.dispositivo_at)}">📱 Vinculado</span>` : `<span class="text-xs text-slate-500">Sin vincular</span>`}</td>
     <td class="whitespace-nowrap">${!esFull() ? `<span class="text-xs text-slate-500"><i class="fa-solid fa-lock text-[10px]"></i> Full</span>` : c.remoto_activo ? `<span class="badge bg-violet-500/15 text-violet-300">🏠 ${fDias(c.remoto_dias)}</span>` : `<span class="text-xs text-slate-500">—</span>`}</td>
     <td>${c.estado === "Activa" ? `<span class="badge bg-emerald-500/15 text-emerald-300">Activa</span>` : `<span class="badge bg-slate-600/40 text-slate-300">Inactiva</span>`}</td>
@@ -1053,7 +1053,8 @@ function pintarColaboradores() {
     : `<tr><td colspan="9" class="text-center text-slate-400 py-6">${q ? "Sin resultados." : "Todavía no cargaste colaboradores."}</td></tr>`;
 }
 function abrirColaborador(id) {
-  const c = id ? S.cache.colaboradores.find(x => x.id === id) : { nombre: "", dni: "", cargo: "", estado: "Activa", hora_entrada: "09:00", hora_salida: "18:00", dias: [1, 2, 3, 4, 5], remoto_activo: false, remoto_dias: [1, 2, 3, 4, 5, 6, 7], remoto_radio_m: 150, remoto_direccion: "" };
+  const E = S.empresa || {};
+  const c = id ? S.cache.colaboradores.find(x => x.id === id) : { nombre: "", dni: "", cargo: "", estado: "Activa", hora_entrada: hm(E.std_entrada || "09:00"), hora_salida: hm(E.std_salida || "18:00"), dias: E.std_dias || [1, 2, 3, 4, 5], horario_general: true, remoto_activo: false, remoto_dias: [1, 2, 3, 4, 5, 6, 7], remoto_radio_m: 150, remoto_direccion: "" };
   const dias = (c.dias || []).map(Number), diasR = (c.remoto_dias || [1, 2, 3, 4, 5, 6, 7]).map(Number);
   const ofi = (S.cache.oficinasEmp || []).find(o => o.activa);
   const linkPersonal = ofi ? linkQR(ofi.qr_token) : "";
@@ -1062,9 +1063,18 @@ function abrirColaborador(id) {
   abrirModal(`
     <h3 class="text-lg font-bold mb-4">${id ? "Editar colaborador" : "Nuevo colaborador"}</h3>
     <div class="space-y-3">
+      <div class="flex items-center gap-4">
+        <div id="cFotoPrev">${avatarColab(c, 72)}</div>
+        <div class="flex flex-wrap gap-2">
+          <label class="btn btn-sm btn-sec cursor-pointer"><i class="fa-solid fa-camera"></i><span id="cFotoTxt">${c.foto ? "Cambiar foto" : "Subir foto"}</span><input type="file" accept="image/*" class="hidden" onchange="cargarFotoColab(this)"></label>
+          <button type="button" id="cFotoQuitar" class="btn btn-sm btn-sec ${c.foto ? "" : "hidden"}" onclick="quitarFotoColab()">Quitar</button>
+        </div>
+      </div>
       <div><label class="lbl">Nombre y apellido</label><input id="cNom" class="inp" value="${esc(c.nombre)}"></div>
       <div><label class="lbl">DNI (con el que ficha)</label><input id="cDni" class="inp font-mono" inputmode="numeric" value="${esc(c.dni)}"></div>
-      <div><label class="lbl">Cargo</label><input id="cCar" class="inp" value="${esc(c.cargo)}"></div>
+      <div><label class="lbl">Cargo</label>${(E.cargos || []).length ? `<select id="cCar" class="inp"><option value="">Sin cargo</option>
+          ${[...new Set([...(E.cargos || []), ...(c.cargo && !(E.cargos || []).includes(c.cargo) ? [c.cargo] : [])])].map(k => `<option ${k === c.cargo ? "selected" : ""}>${esc(k)}</option>`).join("")}</select>`
+        : `<input id="cCar" class="inp" value="${esc(c.cargo)}"><p class="text-xs text-slate-400 mt-1">Podés armar la lista de cargos en <b>Configuración</b> para elegirlos de un menú.</p>`}</div>
       <div class="grid grid-cols-2 gap-3">
         <div><label class="lbl">Cumpleaños <span class="normal-case font-normal">(opcional)</span></label><input id="cNac" type="date" class="inp" max="${hoyISO()}" value="${c.fecha_nacimiento || ""}"></div>
         <div><label class="lbl">Fecha de ingreso <span class="normal-case font-normal">(opcional)</span></label><input id="cIng" type="date" class="inp" value="${c.fecha_ingreso || ""}" oninput="$('cAnt').textContent=antiguedad(this.value)"></div>
@@ -1074,6 +1084,8 @@ function abrirColaborador(id) {
         ${oficinasLimitadas() ? "" : `<option value="">Sin asignar</option>`}
         ${(S.cache.oficinasEmp || []).map(o => `<option value="${o.id}" ${o.id === c.oficina_id ? "selected" : ""}>${esc(o.nombre)}</option>`).join("")}
       </select><p class="text-xs text-slate-400 mt-1">Define qué encargados ven a esta persona. Puede fichar en cualquier oficina.</p></div>
+      <label class="flex items-start gap-2 text-sm cursor-pointer bg-slate-900/60 rounded-xl px-3 py-2"><input type="checkbox" id="cGen" class="w-4 h-4 mt-0.5" ${c.horario_general ? "checked" : ""} onchange="usarHorarioGeneral(this.checked)">
+        <span><b>Usa el horario general</b> de la empresa: ${hm(E.std_entrada || "09:00")} a ${hm(E.std_salida || "18:00")}, ${fDias(E.std_dias || [1, 2, 3, 4, 5])}.<br><span class="text-xs text-slate-400">Desmarcalo para ponerle un horario personalizado.</span></span></label>
       <div class="grid grid-cols-2 gap-3">
         <div><label class="lbl">Hora de entrada</label><input id="cHE" type="time" class="inp" value="${hm(c.hora_entrada)}"></div>
         <div><label class="lbl">Hora de salida</label><input id="cHS" type="time" class="inp" value="${hm(c.hora_salida)}"></div>
@@ -1131,6 +1143,39 @@ function abrirColaborador(id) {
     </div>`);
   if (!$("crBuscar").value && c.remoto_direccion) $("crBuscar").value = c.remoto_direccion;
   if (c.remoto_activo) ubiMapa("cr");
+  S.fotoNueva = undefined;
+  if (c.horario_general) usarHorarioGeneral(true);
+}
+function usarHorarioGeneral(si) {
+  const E = S.empresa || {};
+  if (si) { $("cHE").value = hm(E.std_entrada || "09:00"); $("cHS").value = hm(E.std_salida || "18:00"); marcarDias((E.std_dias || [1, 2, 3, 4, 5]).map(Number)); }
+  [$("cHE"), $("cHS"), ...document.querySelectorAll("#cDias input")].forEach(i => i.disabled = si);
+  document.querySelectorAll("#cDias + div button").forEach(b => b.disabled = si);
+}
+function avatarColab(c, size = 36) {
+  const ini = String(c.nombre || "?").trim().split(/\s+/).slice(0, 2).map(w => w[0] || "").join("").toUpperCase() || "?";
+  return c.foto ? `<img src="${esc(c.foto)}" alt="" class="rounded-full object-cover shrink-0" style="width:${size}px;height:${size}px">`
+    : `<span class="rounded-full shrink-0 inline-flex items-center justify-center font-semibold bg-indigo-600/20 text-indigo-300" style="width:${size}px;height:${size}px;font-size:${Math.round(size * .38)}px">${esc(ini)}</span>`;
+}
+// Foto cuadrada, centrada y liviana (240 px)
+function fotoCuadrada(file, lado = 240, calidad = 0.78) {
+  return new Promise((res, rej) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => { const m = Math.min(img.width, img.height), cv = document.createElement("canvas"); cv.width = cv.height = lado;
+      cv.getContext("2d").drawImage(img, (img.width - m) / 2, (img.height - m) / 2, m, m, 0, 0, lado, lado);
+      URL.revokeObjectURL(url); res(cv.toDataURL("image/jpeg", calidad)); };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("No se pudo leer la imagen")); };
+    img.src = url;
+  });
+}
+async function cargarFotoColab(inp) {
+  const f = inp.files[0]; if (!f) return;
+  try { S.fotoNueva = await fotoCuadrada(f); }
+  catch (e) { return toast(e.message, "error"); }
+  $("cFotoPrev").innerHTML = avatarColab({ foto: S.fotoNueva }, 72); $("cFotoTxt").textContent = "Cambiar foto"; $("cFotoQuitar").classList.remove("hidden");
+}
+function quitarFotoColab() {
+  S.fotoNueva = null; $("cFotoPrev").innerHTML = avatarColab({ nombre: $("cNom").value }, 72); $("cFotoTxt").textContent = "Subir foto"; $("cFotoQuitar").classList.add("hidden");
 }
 async function desvincularCelular(id) {
   if (!confirm("¿Desvincular el celular? El próximo fichaje que haga desde cualquier celular lo va a vincular de nuevo.")) return;
@@ -1171,11 +1216,162 @@ function fechasEspecialesHTML(cols) {
   return `<div class="card p-4 mb-6"><p class="font-semibold text-sm mb-2">🎈 Fechas especiales de la semana</p><div class="flex flex-wrap gap-2">${fe.map(p =>
     `<span class="badge ${p.dias === 0 ? "bg-amber-500/15 text-amber-200" : "bg-slate-600/40 text-slate-300"}">${p.tipo === "cumple" ? `🎂 ${esc(p.c.nombre)} cumple años ${cuando(p)}` : `🎉 ${esc(p.c.nombre)} cumple ${p.anios} año${p.anios === 1 ? "" : "s"} en la empresa ${cuando(p)}`}</span>`).join("")}</div></div>`;
 }
+// ---- Importar colaboradores desde Excel ----
+const IMP_COLS = ["Nombre y apellido", "DNI", "Cargo", "Oficina", "Fecha de ingreso", "Cumpleaños", "Hora de entrada", "Hora de salida", "Días"];
+function cargarXLSX() {
+  if (window.XLSX) return Promise.resolve();
+  return new Promise((res, rej) => { const sc = document.createElement("script"); sc.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+    sc.onload = res; sc.onerror = () => rej(new Error("No se pudo cargar el lector de Excel. Revisá la conexión.")); document.head.appendChild(sc); });
+}
+function abrirImportar() {
+  abrirModal(`
+    <h3 class="text-lg font-bold mb-1">Importar colaboradores desde Excel</h3>
+    <p class="text-sm text-slate-400 mb-4">Para cargar a todo el equipo de una vez.</p>
+    <div class="space-y-4">
+      <div class="bg-slate-900/60 rounded-xl p-4">
+        <p class="font-semibold text-sm mb-1">1. Descargá la planilla modelo</p>
+        <p class="text-xs text-slate-400 mb-3">Obligatorios: <b>nombre y DNI</b>. El resto es opcional: si dejás vacío el horario, toma el <b>horario general</b> de la empresa.</p>
+        <button class="btn btn-sm btn-sec" onclick="descargarModelo()"><i class="fa-solid fa-file-excel"></i>Descargar planilla modelo</button>
+      </div>
+      <div class="bg-slate-900/60 rounded-xl p-4">
+        <p class="font-semibold text-sm mb-1">2. Completala y subila</p>
+        <input type="file" id="impArch" accept=".xlsx,.xls,.csv" class="inp text-sm" onchange="leerImportacion(this)">
+      </div>
+      <div id="impRes"></div>
+      <div class="flex justify-end gap-2"><button class="btn btn-sec" onclick="cerrarModal()">Cerrar</button><button id="impBtn" class="btn btn-pri hidden" onclick="confirmarImportacion()"></button></div>
+    </div>`);
+}
+async function descargarModelo() {
+  try { await cargarXLSX(); } catch (e) { return toast(e.message, "error"); }
+  const E = S.empresa || {}, ofis = (S.cache.oficinasEmp || []).filter(o => o.activa);
+  const ej = [IMP_COLS,
+    ["Juan Pérez", "30123456", (E.cargos || [])[0] || "Vendedor", ofis[0]?.nombre || "", "01/03/2024", "15/08/1990", "", "", ""],
+    ["Ana Gómez", "35987654", (E.cargos || [])[1] || "Cajera", ofis[0]?.nombre || "", "", "", "08:00", "16:00", "L-S"]];
+  const ws = XLSX.utils.aoa_to_sheet(ej);
+  ws["!cols"] = [28, 12, 18, 18, 16, 14, 15, 14, 10].map(w => ({ wch: w }));
+  const info = [["Cómo completar la planilla"], [],
+    ["Nombre y apellido", "Obligatorio."], ["DNI", "Obligatorio. Solo números, sin puntos (6 a 9 dígitos). Es con lo que ficha."],
+    ["Cargo", (E.cargos || []).length ? "Opcional. Cargos de la empresa: " + E.cargos.join(", ") : "Opcional."],
+    ["Oficina", ofis.length ? "Opcional. Escribí el nombre tal cual: " + ofis.map(o => o.nombre).join(", ") : "Opcional."],
+    ["Fecha de ingreso / Cumpleaños", "Opcionales. Formato dd/mm/aaaa."],
+    ["Hora de entrada / salida", `Opcionales (ej. 08:00). Si las dejás vacías usa el horario general: ${hm(E.std_entrada || "09:00")} a ${hm(E.std_salida || "18:00")}, ${fDias(E.std_dias || [1, 2, 3, 4, 5])}.`],
+    ["Días", "Opcional, solo si cargás horario. Ej.: L-V, L-S, Todos, o las letras L M X J V S D."], [],
+    ["Si un DNI ya está cargado, esa fila se saltea (no se modifica)."]];
+  const wi = XLSX.utils.aoa_to_sheet(info); wi["!cols"] = [{ wch: 28 }, { wch: 100 }];
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Colaboradores"); XLSX.utils.book_append_sheet(wb, wi, "Instrucciones");
+  XLSX.writeFile(wb, "Colaboradores_modelo.xlsx");
+}
+function impFecha(v) {
+  if (v == null || v === "") return null;
+  if (v instanceof Date && !isNaN(v)) return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, "0")}-${String(v.getDate()).padStart(2, "0")}`;
+  if (typeof v === "number") { const d = new Date(Math.round((v - 25569) * 864e5)); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`; }
+  const t = String(v).trim(); let m;
+  if ((m = t.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/))) { let y = +m[3]; if (y < 100) y += y > 30 ? 1900 : 2000; return `${y}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`; }
+  if ((m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+  return "x";
+}
+function impHora(v) {
+  if (v == null || v === "") return null;
+  if (v instanceof Date && !isNaN(v)) return `${String(v.getHours()).padStart(2, "0")}:${String(v.getMinutes()).padStart(2, "0")}`;
+  if (typeof v === "number") { const min = Math.round((v % 1) * 1440); return `${String(Math.floor(min / 60) % 24).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`; }
+  const m = String(v).trim().match(/^(\d{1,2})(?::|\.|h)?(\d{2})?\s*(hs?)?$/i);
+  if (!m || +m[1] > 23 || +(m[2] || 0) > 59) return "x";
+  return `${m[1].padStart(2, "0")}:${m[2] || "00"}`;
+}
+function impDias(v) {
+  const t = String(v ?? "").trim().toUpperCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  if (!t) return null;
+  if (/^TODOS?$/.test(t)) return [1, 2, 3, 4, 5, 6, 7];
+  const L = { L: 1, M: 2, X: 3, J: 4, V: 5, S: 6, D: 7 };
+  const r = t.match(/^([LMXJVSD])\s*(?:-|A|AL)\s*([LMXJVSD])$/);
+  if (r) { const a = L[r[1]], b = L[r[2]]; if (a <= b) return Array.from({ length: b - a + 1 }, (_, i) => a + i); }
+  const letras = t.replace(/[\s,;\/-]/g, "");
+  if (/^[LMXJVSD]+$/.test(letras)) return [...new Set([...letras].map(c => L[c]))].sort((a, b) => a - b);
+  return "x";
+}
+async function leerImportacion(inp) {
+  const f = inp.files[0]; if (!f) return;
+  $("impRes").innerHTML = cargando("Leyendo la planilla…"); $("impBtn").classList.add("hidden");
+  let filas;
+  try {
+    await cargarXLSX();
+    const wb = XLSX.read(await f.arrayBuffer(), { type: "array", cellDates: true });
+    filas = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: "" });
+  } catch (e) { return $("impRes").innerHTML = `<p class="text-red-400 text-sm">No se pudo leer el archivo: ${esc(e.message)}</p>`; }
+  const norm = s => String(s).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z]/g, "");
+  const cab = (filas.shift() || []).map(norm);
+  const col = k => { const n = norm(k); const i = cab.findIndex(c => c === n || (n.startsWith("nombre") && c.startsWith("nombre")) || (n.startsWith("hora") && c.startsWith(n.slice(0, 9))) || (n.startsWith("fecha") && c.includes("ingreso")) || (n === "cumpleanos" && c.startsWith("cumple")) || (n === "dias" && c.startsWith("dia"))); return i; };
+  const idx = Object.fromEntries(IMP_COLS.map(k => [k, col(k)]));
+  if (idx["Nombre y apellido"] < 0 || idx["DNI"] < 0) return $("impRes").innerHTML = `<p class="text-red-400 text-sm">La planilla tiene que tener las columnas <b>Nombre y apellido</b> y <b>DNI</b> en la primera fila. Descargá la planilla modelo.</p>`;
+  const E = S.empresa || {}, ofis = S.cache.oficinasEmp || [], existentes = new Set((S.cache.colaboradores || []).map(c => c.dni)), vistos = new Set();
+  const g = (r, k) => idx[k] >= 0 ? r[idx[k]] : "";
+  S.impFilas = filas.filter(r => r.some(v => String(v).trim() !== "")).map((r, n) => {
+    const nombre = String(g(r, "Nombre y apellido")).trim().replace(/\s+/g, " "), dni = String(g(r, "DNI")).replace(/\D/g, "");
+    const out = { n: n + 2, nombre, dni, errores: [], avisos: [] };
+    if (!nombre) out.errores.push("falta el nombre");
+    if (!/^\d{6,9}$/.test(dni)) out.errores.push("DNI inválido");
+    else if (existentes.has(dni)) out.omitir = "DNI ya cargado";
+    else if (vistos.has(dni)) out.errores.push("DNI repetido en la planilla");
+    vistos.add(dni);
+    out.cargo = String(g(r, "Cargo")).trim().slice(0, 60);
+    if (out.cargo && (E.cargos || []).length && !E.cargos.some(c => c.toLowerCase() === out.cargo.toLowerCase())) out.avisos.push("cargo fuera de la lista");
+    else if (out.cargo) out.cargo = (E.cargos || []).find(c => c.toLowerCase() === out.cargo.toLowerCase()) || out.cargo;
+    const of = String(g(r, "Oficina")).trim();
+    if (of) { const o = ofis.find(x => norm(x.nombre) === norm(of)); if (o) out.oficina_id = o.id; else out.errores.push(`no existe la oficina "${of}"`); }
+    else if (oficinasLimitadas()) out.errores.push("falta la oficina");
+    out.fecha_ingreso = impFecha(g(r, "Fecha de ingreso")); out.fecha_nacimiento = impFecha(g(r, "Cumpleaños"));
+    if (out.fecha_ingreso === "x") out.errores.push("fecha de ingreso inválida");
+    if (out.fecha_nacimiento === "x" || (out.fecha_nacimiento && (out.fecha_nacimiento > hoyISO() || out.fecha_nacimiento < "1920-01-01"))) out.errores.push("cumpleaños inválido");
+    const he = impHora(g(r, "Hora de entrada")), hs = impHora(g(r, "Hora de salida")), di = impDias(g(r, "Días"));
+    if (he === "x" || hs === "x") out.errores.push("hora inválida");
+    else if (!he && !hs) { out.horario_general = true; if (di) out.avisos.push("días ignorados: usa el horario general"); }
+    else if (!he || !hs) out.errores.push("completá entrada y salida (o dejá las dos vacías)");
+    else if (he === hs) out.errores.push("entrada y salida iguales");
+    else { out.horario_general = false; out.hora_entrada = he; out.hora_salida = hs; out.dias = di === "x" ? null : (di || (E.std_dias || [1, 2, 3, 4, 5]).map(Number)); if (di === "x") out.errores.push("días inválidos"); }
+    return out;
+  });
+  const ok = S.impFilas.filter(f => !f.errores.length && !f.omitir), mal = S.impFilas.filter(f => f.errores.length), om = S.impFilas.filter(f => f.omitir && !f.errores.length);
+  $("impRes").innerHTML = `
+    <div class="flex flex-wrap gap-2 mb-3 text-sm">
+      <span class="badge bg-emerald-500/15 text-emerald-300">✅ ${ok.length} para cargar</span>
+      ${om.length ? `<span class="badge bg-slate-600/40 text-slate-300">↷ ${om.length} ya estaban (se saltean)</span>` : ""}
+      ${mal.length ? `<span class="badge bg-red-500/15 text-red-300">❌ ${mal.length} con errores (no se cargan)</span>` : ""}
+    </div>
+    <div class="max-h-64 overflow-y-auto border border-slate-700 rounded-xl"><table class="tbl text-xs"><thead><tr><th>Fila</th><th>Colaborador</th><th>Horario</th><th>Estado</th></tr></thead><tbody>
+    ${S.impFilas.map(f => `<tr class="${f.errores.length ? "bg-red-500/5" : f.omitir ? "opacity-60" : ""}"><td>${f.n}</td><td><p class="font-medium">${esc(f.nombre)}</p><p class="text-slate-400"><span class="font-mono">${esc(f.dni)}</span>${f.cargo ? ` · ${esc(f.cargo)}` : ""}</p></td>
+      <td class="whitespace-nowrap">${f.horario_general ? "General" : f.hora_entrada ? `${f.hora_entrada}–${f.hora_salida} ${f.dias ? fDias(f.dias) : ""}` : ""}</td>
+      <td>${f.errores.length ? `<span class="text-red-300">${esc(f.errores.join(", "))}</span>` : f.omitir ? esc(f.omitir) : `<span class="text-emerald-300">OK</span>${f.avisos.length ? ` <span class="text-amber-300">(${esc(f.avisos.join(", "))})</span>` : ""}`}</td></tr>`).join("")}
+    </tbody></table></div>
+    ${mal.length ? `<p class="text-xs text-slate-400 mt-2">Corregí las filas con error en el Excel y volvé a subirlo, o cargá ahora las que están bien.</p>` : ""}`;
+  if (ok.length) { $("impBtn").textContent = `Cargar ${ok.length} colaborador${ok.length === 1 ? "" : "es"}`; $("impBtn").classList.remove("hidden"); $("impBtn").disabled = false; }
+}
+async function confirmarImportacion() {
+  const E = S.empresa || {};
+  const ok = (S.impFilas || []).filter(f => !f.errores.length && !f.omitir);
+  const rows = ok.map(f => ({ empresa_id: S.empresaId, nombre: f.nombre, dni: f.dni, cargo: f.cargo || "", estado: "Activa", oficina_id: f.oficina_id || null,
+    fecha_ingreso: f.fecha_ingreso || null, fecha_nacimiento: f.fecha_nacimiento || null, horario_general: !!f.horario_general,
+    hora_entrada: f.horario_general ? hm(E.std_entrada || "09:00") : f.hora_entrada, hora_salida: f.horario_general ? hm(E.std_salida || "18:00") : f.hora_salida,
+    dias: f.horario_general ? (E.std_dias || [1, 2, 3, 4, 5]).map(Number) : f.dias }));
+  $("impBtn").disabled = true; $("impBtn").textContent = "Cargando…";
+  let cargados = 0; const fallas = [];
+  for (let i = 0; i < rows.length; i += 100) {
+    const lote = rows.slice(i, i + 100);
+    const { error } = await sb.from("colaboradores").insert(lote);
+    if (!error) { cargados += lote.length; continue; }
+    for (const r of lote) { const { error: e2 } = await sb.from("colaboradores").insert(r); if (e2) fallas.push(`${r.nombre} (${r.dni}): ${errTxt(e2)}`); else cargados++; }
+  }
+  cerrarModal(); S.cache.colaboradores = null;
+  toast(`${cargados} colaborador${cargados === 1 ? "" : "es"} cargado${cargados === 1 ? "" : "s"}${fallas.length ? ` · ${fallas.length} con error` : ""}`, fallas.length ? "error" : undefined);
+  if (fallas.length) setTimeout(() => alert("No se pudieron cargar:\n\n" + fallas.join("\n")), 300);
+  tabColaboradores();
+}
+
 function marcarDias(lista, cont = "cDias") { document.querySelectorAll(`#${cont} input`).forEach(i => i.checked = lista.includes(+i.value)); }
 async function guardarColaborador(id) {
   const fila = { nombre: $("cNom").value.trim(), dni: $("cDni").value.replace(/\D/g, ""), cargo: $("cCar").value.trim(), estado: $("cEst").value,
     hora_entrada: $("cHE").value, hora_salida: $("cHS").value, dias: [...document.querySelectorAll("#cDias input:checked")].map(i => +i.value),
-    fecha_nacimiento: $("cNac").value || null, fecha_ingreso: $("cIng").value || null };
+    fecha_nacimiento: $("cNac").value || null, fecha_ingreso: $("cIng").value || null, horario_general: $("cGen").checked };
+  if (S.fotoNueva !== undefined) fila.foto = S.fotoNueva;
   if (fila.fecha_nacimiento && (fila.fecha_nacimiento > hoyISO() || fila.fecha_nacimiento < "1920-01-01")) return $("cErr").textContent = "Revisá la fecha de cumpleaños.";
   if (fila.fecha_ingreso && (fila.fecha_ingreso < "1950-01-01" || fila.fecha_ingreso > sumarDias(hoyISO(), 365))) return $("cErr").textContent = "Revisá la fecha de ingreso.";
   if (!fila.nombre) return $("cErr").textContent = "Falta el nombre.";
@@ -1898,6 +2094,13 @@ const AYUDA = [
   ["qr", "fichaje", "Imprimir o reemplazar el QR", `<p>En <i>Oficinas / QR</i> tocá <b>Imprimir</b> en la oficina. Si se perdió o alguien lo fotografió y querés invalidarlo, pedile a tu proveedor que lo <b>regenere</b>: el QR viejo deja de funcionar y hay que imprimir el nuevo.</p>`],
 
   ["alta", "equipo", "Cargar un colaborador", `<p>En <i>Colaboradores</i> → <b>Nuevo</b>. Completá nombre, <b>DNI</b> (es con lo que ficha), cargo y oficina, su <b>horario</b> de entrada y salida y los <b>días</b> que trabaja. Guardá y ya puede fichar.</p>`],
+  ["foto", "equipo", "Foto del colaborador", `<p>En la ficha de cada colaborador tocá <b>Subir foto</b>: podés sacarla con el celular o elegir una imagen. Se recorta cuadrada y se achica sola. Aparece en la lista de colaboradores.</p>`],
+  ["importar", "equipo", "Cargar a todo el equipo desde Excel", `<ol><li>En <i>Colaboradores</i> tocá <b>Importar Excel</b> y descargá la <b>planilla modelo</b>.</li>
+    <li>Completá una fila por persona: <b>nombre y DNI</b> son obligatorios; cargo, oficina, fecha de ingreso, cumpleaños y horario son opcionales.</li>
+    <li>Si dejás el horario vacío, usa el <b>horario general</b> de la empresa.</li>
+    <li>Subí el archivo: vas a ver una vista previa con lo que se carga, lo que ya existía y los errores, antes de confirmar.</li></ol>`],
+  ["horario-general", "equipo", "Horario general y cargos", `<p>En <i>Configuración</i> definís el <b>horario general</b> (entrada, salida y días) y la <b>lista de cargos</b>.</p>
+    <p>En cada colaborador, <b>"Usa el horario general"</b> viene marcado: si cambiás el horario general, se actualiza en todos ellos. Para alguien con otro horario, desmarcalo en su ficha y cargale el suyo.</p>`],
   ["fechas", "equipo", "Cumpleaños y fecha de ingreso", `<p>En la ficha de cada colaborador podés cargar, si querés, su <b>cumpleaños</b> y su <b>fecha de ingreso</b>. Con la fecha de ingreso se calcula sola la <b>antigüedad</b>.</p>
     <p>En el <i>Panel</i> aparecen las fechas especiales de la semana (cumpleaños y aniversarios en la empresa), y en el portal del empleado lo saludamos el día de su cumpleaños.</p>`],
   ["horario-dia", "equipo", "Un horario distinto algún día (ej. sábado medio día)", `<p>En la ficha del colaborador abrí <b>Horario distinto algún día</b> y cargá la entrada y la salida solo para ese día. Los demás días usan el horario general.</p>`, true],
@@ -2096,19 +2299,80 @@ async function desconectarTelegram() {
 
 // ---- Tolerancia ----
 function tabAjustes() {
-  const e = S.empresa;
+  const e = S.empresa, ed = puedeEditar("configuracion") ? "" : "disabled";
   $("empMain").innerHTML = `
     <div class="card p-6 max-w-lg">
       <h3 class="text-lg font-bold mb-1">Configuración</h3>
       <p class="font-semibold text-sm mt-4 mb-1">Tolerancia</p>
       <p class="text-sm text-slate-400 mb-4">Minutos de margen para todos los colaboradores. Llegar dentro de este margen no cuenta como tardanza, e irse dentro de este margen antes de la hora de salida no cuenta como salida anticipada.</p>
       <div class="max-w-[12rem]"><label class="lbl">Tolerancia (minutos)</label><input type="number" id="ajTol" min="0" max="240" class="inp" value="${e.tolerancia_min}" ${puedeEditar("configuracion") ? "" : "disabled"}></div>
-      <p class="text-xs text-slate-400 mt-3">Los horarios de entrada, salida y días de trabajo se cargan en cada colaborador, desde <b>Colaboradores</b>.</p>
       <p class="font-semibold text-sm mt-6 mb-1">Celular vinculado</p>
       <label class="flex items-start gap-2 text-sm cursor-pointer"><input type="checkbox" id="ajVinc" class="w-4 h-4 mt-0.5" ${e.vincular_dispositivo !== false ? "checked" : ""} ${puedeEditar("configuracion") ? "" : "disabled"}>
         <span>Cada colaborador ficha solo desde su propio celular. El primer fichaje vincula el celular al DNI; si cambia de teléfono, lo desvinculás desde <b>Colaboradores</b>. Apagalo solo si usan un celular o tablet compartido para fichar.</span></label>
       ${puedeEditar("configuracion") ? `<button class="btn btn-pri mt-5" onclick="guardarTolerancia()">Guardar</button>` : `<p class="text-xs text-slate-400 mt-5"><i class="fa-solid fa-eye mr-1"></i>Solo lectura.</p>`}
+    </div>
+    <div class="card p-6 max-w-lg mt-6">
+      <h3 class="text-lg font-bold mb-1">Horario general</h3>
+      <p class="text-sm text-slate-400 mb-4">El horario que usa la mayoría. Cada colaborador con <b>"Usa el horario general"</b> marcado lo toma de acá, y si lo cambiás se actualiza en todos ellos. Los que necesitan otro horario se personalizan en su ficha.</p>
+      <div class="grid grid-cols-2 gap-3 max-w-sm">
+        <div><label class="lbl">Entrada</label><input id="stE" type="time" class="inp" value="${hm(e.std_entrada || "09:00")}" ${ed}></div>
+        <div><label class="lbl">Salida</label><input id="stS" type="time" class="inp" value="${hm(e.std_salida || "18:00")}" ${ed}></div>
+      </div>
+      <label class="lbl mt-3">Días de trabajo</label>
+      <div class="flex flex-wrap gap-1.5" id="stDias">${chipsDiasHTML((e.std_dias || [1, 2, 3, 4, 5]).map(Number), !puedeEditar("configuracion"))}</div>
+      <p class="text-xs text-slate-400 mt-3" id="stUsan"></p>
+      <h3 class="text-lg font-bold mt-7 mb-1">Cargos</h3>
+      <p class="text-sm text-slate-400 mb-3">La lista de cargos que se eligen en la ficha de cada colaborador.</p>
+      <div id="stCargos" class="flex flex-wrap gap-2 mb-3"></div>
+      ${puedeEditar("configuracion") ? `<div class="flex gap-2 max-w-sm"><input id="stNuevo" class="inp" maxlength="60" placeholder="Ej: Cajero, Repositor, Encargado" onkeydown="if(event.key==='Enter'){event.preventDefault();agregarCargo()}">
+        <button class="btn btn-sec" onclick="agregarCargo()"><i class="fa-solid fa-plus"></i>Agregar</button></div>
+      <button class="btn btn-pri mt-5" onclick="guardarEstandar()">Guardar horario y cargos</button>` : ""}
     </div>`;
+  S.stCargos = [...(e.cargos || [])];
+  pintarCargos();
+  contarHorarioGeneral();
+}
+async function contarHorarioGeneral() {
+  const E = S.empresa;
+  const { data } = await sb.from("colaboradores").select("id, hora_entrada, hora_salida, dias, horario_dias, horario_general").eq("empresa_id", S.empresaId);
+  if (!$("stUsan")) return;
+  const usan = (data || []).filter(c => c.horario_general).length;
+  const dEq = (a, b) => [...(a || [])].map(Number).sort().join() === [...(b || [])].map(Number).sort().join();
+  S.stIguales = (data || []).filter(c => !c.horario_general && hm(c.hora_entrada) === hm(E.std_entrada || "09:00") && hm(c.hora_salida) === hm(E.std_salida || "18:00") && dEq(c.dias, E.std_dias || [1, 2, 3, 4, 5])).map(c => c.id);
+  $("stUsan").innerHTML = `${usan} colaborador${usan === 1 ? "" : "es"} usa${usan === 1 ? "" : "n"} el horario general.` +
+    (S.stIguales.length && puedeEditar("configuracion") ? ` <button class="text-indigo-300 underline" onclick="adoptarHorarioGeneral()">Pasar al horario general a ${S.stIguales.length} que ya tiene${S.stIguales.length === 1 ? "" : "n"} este mismo horario</button>` : "");
+}
+async function adoptarHorarioGeneral() {
+  const { error } = await sb.from("colaboradores").update({ horario_general: true }).in("id", S.stIguales);
+  if (error) return toast(errTxt(error), "error");
+  toast(`${S.stIguales.length} colaborador${S.stIguales.length === 1 ? "" : "es"} pasaron al horario general`); S.cache.colaboradores = null; contarHorarioGeneral();
+}
+function chipsDiasHTML(sel, deshabilitado = false) {
+  return DIAS.map(([n, l, nom]) => `<label title="${nom}" class="cursor-pointer"><input type="checkbox" value="${n}" class="peer sr-only" ${sel.includes(n) ? "checked" : ""} ${deshabilitado ? "disabled" : ""}>
+    <span class="inline-flex w-10 h-10 items-center justify-center rounded-xl border border-slate-600 text-sm font-semibold text-slate-300 peer-checked:bg-indigo-600 peer-checked:border-indigo-500 peer-checked:text-white">${l}</span></label>`).join("");
+}
+function pintarCargos() {
+  const ed = puedeEditar("configuracion");
+  $("stCargos").innerHTML = S.stCargos.length ? S.stCargos.map((c, i) => `<span class="badge bg-slate-600/40 text-slate-300 !text-sm !py-1.5">${esc(c)}${ed ? ` <button class="ml-1 text-slate-400 hover:text-red-400" title="Quitar" onclick="S.stCargos.splice(${i},1);pintarCargos()">✕</button>` : ""}</span>`).join("")
+    : `<p class="text-sm text-slate-400">Todavía no hay cargos. Mientras tanto, el cargo se escribe a mano en cada ficha.</p>`;
+}
+function agregarCargo() {
+  const v = $("stNuevo").value.trim();
+  if (!v) return;
+  if (S.stCargos.some(c => c.toLowerCase() === v.toLowerCase())) return toast("Ese cargo ya está en la lista", "error");
+  S.stCargos.push(v); S.stCargos.sort((a, b) => a.localeCompare(b, "es")); $("stNuevo").value = ""; pintarCargos(); $("stNuevo").focus();
+}
+async function guardarEstandar() {
+  const ent = $("stE").value, sal = $("stS").value, dias = [...document.querySelectorAll("#stDias input:checked")].map(i => +i.value);
+  if (!ent || !sal || ent === sal) return toast("Revisá la entrada y la salida del horario general", "error");
+  if (!dias.length) return toast("Marcá al menos un día", "error");
+  if ($("stNuevo").value.trim()) agregarCargo();
+  try {
+    const n = await rpc("rl_guardar_estandar", { p_empresa: S.empresaId, p_cargos: S.stCargos, p_entrada: ent, p_salida: sal, p_dias: dias });
+    Object.assign(S.empresa, { cargos: [...S.stCargos], std_entrada: ent, std_salida: sal, std_dias: dias });
+    S.cache.colaboradores = null;
+    toast(`Guardado${n ? ` · horario actualizado en ${n} colaborador${n === 1 ? "" : "es"}` : ""}`); tabAjustes();
+  } catch (e) { toast(errTxt(e), "error"); }
 }
 async function guardarTolerancia() {
   const t = +$("ajTol").value;
