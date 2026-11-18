@@ -1054,7 +1054,7 @@ function pintarColaboradores() {
 }
 function abrirColaborador(id) {
   const E = S.empresa || {};
-  const c = id ? S.cache.colaboradores.find(x => x.id === id) : { nombre: "", dni: "", cargo: "", estado: "Activa", hora_entrada: hm(E.std_entrada || "09:00"), hora_salida: hm(E.std_salida || "18:00"), dias: E.std_dias || [1, 2, 3, 4, 5], horario_general: true, remoto_activo: false, remoto_dias: [1, 2, 3, 4, 5, 6, 7], remoto_radio_m: 150, remoto_direccion: "" };
+  const c = id ? S.cache.colaboradores.find(x => x.id === id) : { nombre: "", dni: "", cargo: "", estado: "Activa", hora_entrada: hm(E.std_entrada || "09:00"), hora_salida: hm(E.std_salida || "18:00"), dias: E.std_dias || [1, 2, 3, 4, 5], horario_dias: esFull() ? (E.std_horario_dias || {}) : {}, horario_general: true, remoto_activo: false, remoto_dias: [1, 2, 3, 4, 5, 6, 7], remoto_radio_m: 150, remoto_direccion: "" };
   const dias = (c.dias || []).map(Number), diasR = (c.remoto_dias || [1, 2, 3, 4, 5, 6, 7]).map(Number);
   const ofi = (S.cache.oficinasEmp || []).find(o => o.activa);
   const linkPersonal = ofi ? linkQR(ofi.qr_token) : "";
@@ -1085,7 +1085,7 @@ function abrirColaborador(id) {
         ${(S.cache.oficinasEmp || []).map(o => `<option value="${o.id}" ${o.id === c.oficina_id ? "selected" : ""}>${esc(o.nombre)}</option>`).join("")}
       </select><p class="text-xs text-slate-400 mt-1">Define qué encargados ven a esta persona. Puede fichar en cualquier oficina.</p></div>
       <label class="flex items-start gap-2 text-sm cursor-pointer bg-slate-900/60 rounded-xl px-3 py-2"><input type="checkbox" id="cGen" class="w-4 h-4 mt-0.5" ${c.horario_general ? "checked" : ""} onchange="usarHorarioGeneral(this.checked)">
-        <span><b>Usa el horario general</b> de la empresa: ${hm(E.std_entrada || "09:00")} a ${hm(E.std_salida || "18:00")}, ${fDias(E.std_dias || [1, 2, 3, 4, 5])}.<br><span class="text-xs text-slate-400">Desmarcalo para ponerle un horario personalizado.</span></span></label>
+        <span><b>Usa el horario general</b> de la empresa: ${hm(E.std_entrada || "09:00")} a ${hm(E.std_salida || "18:00")}, ${fDias(E.std_dias || [1, 2, 3, 4, 5])}${esFull() && Object.keys(E.std_horario_dias || {}).length ? ` · ${hdCorto(E.std_horario_dias)}` : ""}.<br><span class="text-xs text-slate-400">Desmarcalo para ponerle un horario personalizado.</span></span></label>
       <div class="grid grid-cols-2 gap-3">
         <div><label class="lbl">Hora de entrada</label><input id="cHE" type="time" class="inp" value="${hm(c.hora_entrada)}"></div>
         <div><label class="lbl">Hora de salida</label><input id="cHS" type="time" class="inp" value="${hm(c.hora_salida)}"></div>
@@ -1148,8 +1148,9 @@ function abrirColaborador(id) {
 }
 function usarHorarioGeneral(si) {
   const E = S.empresa || {};
-  if (si) { $("cHE").value = hm(E.std_entrada || "09:00"); $("cHS").value = hm(E.std_salida || "18:00"); marcarDias((E.std_dias || [1, 2, 3, 4, 5]).map(Number)); }
-  [$("cHE"), $("cHS"), ...document.querySelectorAll("#cDias input")].forEach(i => i.disabled = si);
+  if (si) { $("cHE").value = hm(E.std_entrada || "09:00"); $("cHS").value = hm(E.std_salida || "18:00"); marcarDias((E.std_dias || [1, 2, 3, 4, 5]).map(Number));
+    if ($("hdE1")) for (const [d] of DIAS) { const h = (E.std_horario_dias || {})[d] || {}; $("hdE" + d).value = h.e || ""; $("hdS" + d).value = h.s || ""; } }
+  [$("cHE"), $("cHS"), ...document.querySelectorAll("#cDias input"), ...document.querySelectorAll('[id^="hdE"],[id^="hdS"]')].forEach(i => i.disabled = si);
   document.querySelectorAll("#cDias + div button").forEach(b => b.disabled = si);
 }
 function avatarColab(c, size = 36) {
@@ -1351,7 +1352,7 @@ async function confirmarImportacion() {
   const rows = ok.map(f => ({ empresa_id: S.empresaId, nombre: f.nombre, dni: f.dni, cargo: f.cargo || "", estado: "Activa", oficina_id: f.oficina_id || null,
     fecha_ingreso: f.fecha_ingreso || null, fecha_nacimiento: f.fecha_nacimiento || null, horario_general: !!f.horario_general,
     hora_entrada: f.horario_general ? hm(E.std_entrada || "09:00") : f.hora_entrada, hora_salida: f.horario_general ? hm(E.std_salida || "18:00") : f.hora_salida,
-    dias: f.horario_general ? (E.std_dias || [1, 2, 3, 4, 5]).map(Number) : f.dias }));
+    dias: f.horario_general ? (E.std_dias || [1, 2, 3, 4, 5]).map(Number) : f.dias, horario_dias: f.horario_general && esFull() ? (E.std_horario_dias || {}) : {} }));
   $("impBtn").disabled = true; $("impBtn").textContent = "Cargando…";
   let cargados = 0; const fallas = [];
   for (let i = 0; i < rows.length; i += 100) {
@@ -2099,7 +2100,7 @@ const AYUDA = [
     <li>Completá una fila por persona: <b>nombre y DNI</b> son obligatorios; cargo, oficina, fecha de ingreso, cumpleaños y horario son opcionales.</li>
     <li>Si dejás el horario vacío, usa el <b>horario general</b> de la empresa.</li>
     <li>Subí el archivo: vas a ver una vista previa con lo que se carga, lo que ya existía y los errores, antes de confirmar.</li></ol>`],
-  ["horario-general", "equipo", "Horario general y cargos", `<p>En <i>Configuración</i> definís el <b>horario general</b> (entrada, salida y días) y la <b>lista de cargos</b>.</p>
+  ["horario-general", "equipo", "Horario general y cargos", `<p>En <i>Configuración</i> definís el <b>horario general</b> (entrada, salida y días, y si algún día es distinto, por ejemplo el sábado medio día) y la <b>lista de cargos</b>.</p>
     <p>En cada colaborador, <b>"Usa el horario general"</b> viene marcado: si cambiás el horario general, se actualiza en todos ellos. Para alguien con otro horario, desmarcalo en su ficha y cargale el suyo.</p>`],
   ["fechas", "equipo", "Cumpleaños y fecha de ingreso", `<p>En la ficha de cada colaborador podés cargar, si querés, su <b>cumpleaños</b> y su <b>fecha de ingreso</b>. Con la fecha de ingreso se calcula sola la <b>antigüedad</b>.</p>
     <p>En el <i>Panel</i> aparecen las fechas especiales de la semana (cumpleaños y aniversarios en la empresa), y en el portal del empleado lo saludamos el día de su cumpleaños.</p>`],
@@ -2320,6 +2321,14 @@ function tabAjustes() {
       </div>
       <label class="lbl mt-3">Días de trabajo</label>
       <div class="flex flex-wrap gap-1.5" id="stDias">${chipsDiasHTML((e.std_dias || [1, 2, 3, 4, 5]).map(Number), !puedeEditar("configuracion"))}</div>
+      <details class="bg-slate-900/60 rounded-xl px-3 py-2 mt-3" ${Object.keys(e.std_horario_dias || {}).length ? "open" : ""}>
+        <summary class="cursor-pointer text-sm font-semibold">Horario distinto algún día ${esFull() ? "" : `<i class="fa-solid fa-lock text-xs text-slate-500 ml-1"></i>`}</summary>
+        ${esFull() ? `<p class="text-xs text-slate-400 mt-2 mb-2">Dejá vacío el día que usa el horario de arriba. Ej.: sábado de 09:00 a 13:00.</p>
+        <div class="space-y-1.5">${DIAS.map(([d, , nom]) => { const h = (e.std_horario_dias || {})[d] || {};
+          return `<div class="grid grid-cols-[6rem_1fr_1fr] gap-2 items-center text-sm"><span class="text-slate-300">${nom}</span>
+            <input id="sdE${d}" type="time" class="inp !py-1.5" value="${h.e || ""}" aria-label="Entrada ${nom}" ${ed}><input id="sdS${d}" type="time" class="inp !py-1.5" value="${h.s || ""}" aria-label="Salida ${nom}" ${ed}></div>`; }).join("")}</div>`
+        : `<p class="text-xs text-slate-400 mt-2">Disponible en la versión Full. <button type="button" class="text-indigo-300 underline" onclick="upsell('El horario distinto por día')">Ver más</button></p>`}
+      </details>
       <p class="text-xs text-slate-400 mt-3" id="stUsan"></p>
       <h3 class="text-lg font-bold mt-7 mb-1">Cargos</h3>
       <p class="text-sm text-slate-400 mb-3">La lista de cargos que se eligen en la ficha de cada colaborador.</p>
@@ -2332,13 +2341,15 @@ function tabAjustes() {
   pintarCargos();
   contarHorarioGeneral();
 }
+const hdTxt = hd => Object.entries(hd || {}).sort().map(([d, h]) => `${d}:${h.e}-${h.s}`).join(",");
+const hdCorto = hd => Object.entries(hd || {}).sort().map(([d, h]) => `${DIAS[d - 1][1]} ${h.e}–${h.s}`).join(" · ");
 async function contarHorarioGeneral() {
   const E = S.empresa;
   const { data } = await sb.from("colaboradores").select("id, hora_entrada, hora_salida, dias, horario_dias, horario_general").eq("empresa_id", S.empresaId);
   if (!$("stUsan")) return;
   const usan = (data || []).filter(c => c.horario_general).length;
   const dEq = (a, b) => [...(a || [])].map(Number).sort().join() === [...(b || [])].map(Number).sort().join();
-  S.stIguales = (data || []).filter(c => !c.horario_general && hm(c.hora_entrada) === hm(E.std_entrada || "09:00") && hm(c.hora_salida) === hm(E.std_salida || "18:00") && dEq(c.dias, E.std_dias || [1, 2, 3, 4, 5])).map(c => c.id);
+  S.stIguales = (data || []).filter(c => !c.horario_general && hm(c.hora_entrada) === hm(E.std_entrada || "09:00") && hm(c.hora_salida) === hm(E.std_salida || "18:00") && dEq(c.dias, E.std_dias || [1, 2, 3, 4, 5]) && hdTxt(c.horario_dias) === hdTxt(E.std_horario_dias)).map(c => c.id);
   $("stUsan").innerHTML = `${usan} colaborador${usan === 1 ? "" : "es"} usa${usan === 1 ? "" : "n"} el horario general.` +
     (S.stIguales.length && puedeEditar("configuracion") ? ` <button class="text-indigo-300 underline" onclick="adoptarHorarioGeneral()">Pasar al horario general a ${S.stIguales.length} que ya tiene${S.stIguales.length === 1 ? "" : "n"} este mismo horario</button>` : "");
 }
@@ -2366,10 +2377,18 @@ async function guardarEstandar() {
   const ent = $("stE").value, sal = $("stS").value, dias = [...document.querySelectorAll("#stDias input:checked")].map(i => +i.value);
   if (!ent || !sal || ent === sal) return toast("Revisá la entrada y la salida del horario general", "error");
   if (!dias.length) return toast("Marcá al menos un día", "error");
+  const hd = {};
+  if (esFull()) for (const [d, , nom] of DIAS) {
+    const he = $("sdE" + d).value, hs = $("sdS" + d).value;
+    if (!he && !hs) continue;
+    if (!he || !hs) return toast(`Completá entrada y salida del ${nom.toLowerCase()} (o dejá los dos vacíos)`, "error");
+    if (he === hs) return toast(`La entrada y la salida del ${nom.toLowerCase()} no pueden ser a la misma hora`, "error");
+    hd[d] = { e: he, s: hs };
+  }
   if ($("stNuevo").value.trim()) agregarCargo();
   try {
-    const n = await rpc("rl_guardar_estandar", { p_empresa: S.empresaId, p_cargos: S.stCargos, p_entrada: ent, p_salida: sal, p_dias: dias });
-    Object.assign(S.empresa, { cargos: [...S.stCargos], std_entrada: ent, std_salida: sal, std_dias: dias });
+    const n = await rpc("rl_guardar_estandar", { p_empresa: S.empresaId, p_cargos: S.stCargos, p_entrada: ent, p_salida: sal, p_dias: dias, p_horario_dias: hd });
+    Object.assign(S.empresa, { cargos: [...S.stCargos], std_entrada: ent, std_salida: sal, std_dias: dias, std_horario_dias: hd });
     S.cache.colaboradores = null;
     toast(`Guardado${n ? ` · horario actualizado en ${n} colaborador${n === 1 ? "" : "es"}` : ""}`); tabAjustes();
   } catch (e) { toast(errTxt(e), "error"); }
