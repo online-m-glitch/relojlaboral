@@ -1034,12 +1034,20 @@ async function tabColaboradores() {
       <h3 class="text-xl font-bold">Colaboradores <span class="text-sm text-slate-400 font-normal">(${data.filter(c => c.estado === "Activa").length} activos)</span></h3>
       <div class="flex gap-2"><input id="colBuscar" class="inp !w-56" placeholder="Buscar nombre, DNI o cargo" oninput="pintarColaboradores()">${puedeEditar("colaboradores") ? `<button class="btn btn-sec" onclick="abrirImportar()"><i class="fa-solid fa-file-excel"></i>Importar Excel</button><button class="btn btn-pri" onclick="abrirColaborador()"><i class="fa-solid fa-plus"></i>Nuevo</button>` : ""}</div>
     </div>
+    <div id="colCargos" class="flex flex-wrap gap-2 mb-4"></div>
     <div class="card overflow-x-auto"><table class="tbl"><thead><tr><th>Nombre</th><th>DNI</th><th>Cargo</th><th>Horario</th><th>Días</th><th>Celular</th><th>Remoto</th><th>Estado</th><th></th></tr></thead><tbody id="colBody"></tbody></table></div>`;
   pintarColaboradores();
 }
 function pintarColaboradores() {
   const q = ($("colBuscar")?.value || "").toLowerCase().trim();
-  const lista = S.cache.colaboradores.filter(c => !q || [c.nombre, c.dni, c.cargo].some(v => String(v).toLowerCase().includes(q)));
+  const cargoDe = c => String(c.cargo || "").trim();
+  const conteo = {};
+  for (const c of S.cache.colaboradores) { const k = cargoDe(c) || "Sin cargo"; conteo[k] = (conteo[k] || 0) + 1; }
+  const claves = Object.keys(conteo).sort((a, b) => conteo[b] - conteo[a] || a.localeCompare(b, "es"));
+  if (S.colCargo && !conteo[S.colCargo]) S.colCargo = "";
+  if ($("colCargos")) $("colCargos").innerHTML = claves.length > 1 ? [["", "Todos", S.cache.colaboradores.length], ...claves.map(k => [k, k, conteo[k]])].map(([v, t, n]) =>
+    `<button class="btn btn-sm ${S.colCargo === v || (!S.colCargo && !v) ? "btn-pri" : "btn-sec"}" onclick="S.colCargo=${esc(JSON.stringify(v))};pintarColaboradores()">${esc(t)} <span class="opacity-70">${n}</span></button>`).join("") : "";
+  const lista = S.cache.colaboradores.filter(c => (!S.colCargo || (cargoDe(c) || "Sin cargo") === S.colCargo) && (!q || [c.nombre, c.dni, c.cargo].some(v => String(v).toLowerCase().includes(q))));
   $("colBody").innerHTML = lista.length ? lista.map(c => `
     <tr class="${c.estado === "Activa" ? "" : "opacity-50"}"><td class="font-medium"><div class="flex items-center gap-3">${avatarColab(c, 36)}<div>${esc(c.nombre)}${c.oficina_id ? `<p class="text-xs text-slate-400 font-normal"><i class="fa-solid fa-location-dot mr-1"></i>${esc((S.cache.oficinasEmp || []).find(o => o.id === c.oficina_id)?.nombre || "")}</p>` : ""}</div></div></td><td class="font-mono">${esc(c.dni)}</td><td>${esc(c.cargo)}</td>
     <td class="whitespace-nowrap">${fHorario(c)}${c.horario_general ? `<p class="text-xs text-slate-400">Horario general</p>` : ""}${Object.keys(c.horario_dias || {}).length ? `<p class="text-xs text-indigo-300">${Object.entries(c.horario_dias).sort().map(([d, h]) => `${DIAS[d - 1][1]} ${h.e}–${h.s}`).join(" · ")}</p>` : ""}</td><td class="whitespace-nowrap">${fDias(c.dias)}</td>
