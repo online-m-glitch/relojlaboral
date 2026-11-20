@@ -1449,7 +1449,7 @@ async function buscarRegistros() {
   let q = sb.from("registros").select("id, manual, cargado_por, nota, entrada, salida, tardanza_min, salida_anticipada_min, dia_laborable, hora_entrada_prog, hora_salida_prog, entrada_lugar, salida_lugar, entrada_distancia_m, salida_distancia_m, pausa_inicio, pausa_min, colaborador_id, colaboradores(nombre, dni), oficina:oficinas!registros_oficina_id_fkey(nombre), oficina_salida:oficinas!registros_oficina_salida_id_fkey(nombre)")
     .eq("empresa_id", S.empresaId).gte("entrada", f.desde + "T00:00:00-03:00").lt("entrada", sumarDias(f.hasta, 1) + "T00:00:00-03:00")
     .order("entrada", { ascending: false }).limit(2000);
-  let qr = sb.from("fichaje_rechazos").select("id, creado, tipo, motivo, distancia_m, colaboradores(nombre), oficinas(nombre)")
+  let qr = sb.from("fichaje_rechazos").select("id, creado, tipo, motivo, distancia_m, celular_de, colaboradores(nombre), oficinas(nombre)")
     .eq("empresa_id", S.empresaId).gte("creado", f.desde + "T00:00:00-03:00").lt("creado", sumarDias(f.hasta, 1) + "T00:00:00-03:00")
     .order("creado", { ascending: false }).limit(200);
   if (f.col) { q = q.eq("colaborador_id", f.col); qr = qr.eq("colaborador_id", f.col); }
@@ -1473,7 +1473,7 @@ async function buscarRegistros() {
       <div class="px-4 py-3 border-b border-slate-700 font-semibold text-sm"><i class="fa-solid fa-shield-halved text-red-400 mr-1"></i>Intentos rechazados (${rech.length})</div>
       <table class="tbl"><thead><tr><th>Fecha</th><th>Hora</th><th>Colaborador</th><th>Oficina</th><th>Tipo</th><th>Motivo</th></tr></thead><tbody>
       ${rech.map(x => `<tr><td>${fFecha(x.creado)}</td><td>${fHora(x.creado)}</td><td class="font-medium">${esc(x.colaboradores?.nombre || "—")}</td><td>${esc(x.oficinas?.nombre || "—")}</td>
-        <td>${x.tipo === "entrada" ? "Entrada" : "Salida"}</td><td class="text-xs text-slate-300">${esc(x.motivo)}</td></tr>`).join("")}
+        <td>${x.tipo === "entrada" ? "Entrada" : "Salida"}</td><td class="text-xs text-slate-300">${esc(x.motivo)}${x.celular_de ? `<p class="mt-1 text-amber-300">📱 Ese celular está vinculado a <b>${esc(x.celular_de)}</b></p>` : ""}</td></tr>`).join("")}
       </tbody></table></div>` : ""}`;
 }
 function iconoLugar(lugar, dist) {
