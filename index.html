@@ -1534,16 +1534,35 @@ function abrirCorreccion(id) {
     <h3 class="text-lg font-bold mb-1">Corregir fichaje</h3>
     <p class="text-sm text-slate-400 mb-4">${esc(x.colaboradores?.nombre)} · ${fFecha(x.entrada)}</p>
     <div class="space-y-3">
-      <div><label class="lbl">Entrada</label><input type="datetime-local" id="coEnt" class="inp" value="${aLocalInput(x.entrada)}"></div>
-      <div><label class="lbl">Salida</label><input type="datetime-local" id="coSal" class="inp" value="${aLocalInput(x.salida)}"></div>
+      <div><label class="lbl">Entrada</label><input type="datetime-local" id="coEnt" class="inp" onchange="coRecalc(${id})" value="${aLocalInput(x.entrada)}"></div>
+      <div><label class="lbl">Salida</label><input type="datetime-local" id="coSal" class="inp" onchange="coRecalc(${id})" value="${aLocalInput(x.salida)}"></div>
       <div class="grid grid-cols-2 gap-3">
         <div><label class="lbl">Tardanza (min)</label><input type="number" min="0" id="coTar" class="inp" value="${x.tardanza_min}"></div>
         <div><label class="lbl">Salida anticipada (min)</label><input type="number" min="0" id="coAnt" class="inp" value="${x.salida_anticipada_min || 0}"></div>
       </div>
       <div class="max-w-[50%]"><label class="lbl">Pausas (min)</label><input type="number" min="0" id="coPau" class="inp" value="${x.pausa_min || 0}"></div>
-      <p class="text-xs text-slate-400">Horario de Argentina (UTC-3). Dejá la salida vacía si la jornada sigue abierta.</p>
+      <p class="text-xs text-slate-400">Horario de Argentina (UTC-3). Dejá la salida vacía si la jornada sigue abierta. Al cambiar la entrada o la salida, la tardanza y la salida anticipada se recalculan solas según el horario${x.hora_entrada_prog ? ` (${hm(x.hora_entrada_prog)}–${hm(x.hora_salida_prog)})` : ""}; podés ajustarlas a mano.</p>
       <div class="flex justify-end gap-2"><button class="btn btn-sec" onclick="cerrarModal()">Cancelar</button><button class="btn btn-pri" onclick="guardarCorreccion(${id})">Guardar</button></div>
     </div>`);
+}
+// Recalcula tardanza y salida anticipada al corregir la entrada o la salida (mismo criterio que el fichaje: con tolerancia en la entrada).
+function coRecalc(id) {
+  const x = (S.cache.registros || []).find(r => r.id === id);
+  if (!x || !x.hora_entrada_prog) return;
+  const ent = $("coEnt").value, sal = $("coSal").value;
+  const aMin = t => { const [h, m] = String(t).split(":").map(Number); return h * 60 + m; };
+  const pe = aMin(x.hora_entrada_prog), ps = x.hora_salida_prog ? aMin(x.hora_salida_prog) : null;
+  const tol = +(S.empresa?.tolerancia_min || 0);
+  if (ent && x.dia_laborable !== false) {
+    const t = aMin(ent.slice(11, 16)) - pe;
+    $("coTar").value = t > tol ? t : 0;
+  }
+  if (ent && sal && ps != null && x.dia_laborable !== false) {
+    const base = new Date(ent.slice(0, 10) + "T00:00:00-03:00").getTime();
+    const finProg = base + (ps + (ps <= pe ? 1440 : 0)) * 60000;
+    const real = new Date(sal + ":00-03:00").getTime();
+    $("coAnt").value = Math.max(0, Math.round((finProg - real) / 60000));
+  }
 }
 async function guardarCorreccion(id) {
   const ent = $("coEnt").value, sal = $("coSal").value;
