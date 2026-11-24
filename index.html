@@ -1446,7 +1446,7 @@ async function tabRegistros() {
 async function buscarRegistros() {
   const f = S.filtroReg = { desde: $("rDesde").value, hasta: $("rHasta").value, col: $("rCol").value };
   if (!f.desde || !f.hasta || f.desde > f.hasta) return toast("Revisá las fechas", "error");
-  let q = sb.from("registros").select("id, manual, cargado_por, nota, entrada, salida, tardanza_min, salida_anticipada_min, dia_laborable, hora_entrada_prog, hora_salida_prog, entrada_lugar, salida_lugar, entrada_distancia_m, salida_distancia_m, pausa_inicio, pausa_min, colaborador_id, colaboradores(nombre, dni), oficina:oficinas!registros_oficina_id_fkey(nombre), oficina_salida:oficinas!registros_oficina_salida_id_fkey(nombre)")
+  let q = sb.from("registros").select("id, manual, cargado_por, nota, corregido_por, corregido_en, correccion, entrada, salida, tardanza_min, salida_anticipada_min, dia_laborable, hora_entrada_prog, hora_salida_prog, entrada_lugar, salida_lugar, entrada_distancia_m, salida_distancia_m, pausa_inicio, pausa_min, colaborador_id, colaboradores(nombre, dni), oficina:oficinas!registros_oficina_id_fkey(nombre), oficina_salida:oficinas!registros_oficina_salida_id_fkey(nombre)")
     .eq("empresa_id", S.empresaId).gte("entrada", f.desde + "T00:00:00-03:00").lt("entrada", sumarDias(f.hasta, 1) + "T00:00:00-03:00")
     .order("entrada", { ascending: false }).limit(2000);
   let qr = sb.from("fichaje_rechazos").select("id, creado, tipo, motivo, distancia_m, celular_de, colaboradores(nombre), oficinas(nombre)")
@@ -1503,6 +1503,7 @@ const VISTAS_REG = [
   ["tarde", "Llegaron tarde", x => x.tardanza_min > 0],
   ["antes", "Se fueron antes", x => x.salida_anticipada_min > 0],
   ["mano", "Cargados a mano", x => !!x.manual],
+  ["corregidos", "Corregidos", x => !!x.corregido_en],
   ["no_ficharon", "No ficharon", null],
 ];
 function verRegistros(v) { S.regVista = v; pintarRegistros(); }
@@ -1537,8 +1538,8 @@ function pintarRegistros() {
         <td class="whitespace-nowrap">${x.hora_entrada_prog ? fHorario({ hora_entrada: x.hora_entrada_prog, hora_salida: x.hora_salida_prog }) : "—"}</td>
         <td>${esc(x.oficina?.nombre || "—")}${x.oficina_salida && x.oficina_salida.nombre !== x.oficina?.nombre ? `<p class="text-xs text-slate-400">Salida: ${esc(x.oficina_salida.nombre)}</p>` : ""}</td>
         <td class="whitespace-nowrap">${fHora(x.entrada)}${iconoLugar(x.entrada_lugar, x.entrada_distancia_m)}</td><td class="whitespace-nowrap">${x.salida ? (fFecha(x.salida) !== fFecha(x.entrada) ? fFecha(x.salida) + " " : "") + fHora(x.salida) + iconoLugar(x.salida_lugar, x.salida_distancia_m) : "—"}</td>
-        <td>${x.salida ? fMin(minutosTrabajados(x)) : "—"}</td><td>${estadoBadge(x)}${x.manual ? `<p class="mt-1"><span class="badge bg-amber-500/15 text-amber-200" title="Cargado por ${esc(x.cargado_por || "")}${x.nota ? " · " + esc(x.nota) : ""}">✍️ A mano</span></p>` : ""}</td>
-        <td>${puedeEditar("registros") ? `<button class="btn btn-sm btn-sec" title="Corregir" onclick="abrirCorreccion(${x.id})"><i class="fa-solid fa-pen"></i></button>` : ""}</td></tr>`).join("")
+        <td>${x.salida ? fMin(minutosTrabajados(x)) : "—"}</td><td>${estadoBadge(x)}${x.manual ? `<p class="mt-1"><span class="badge bg-amber-500/15 text-amber-200" title="Cargado por ${esc(x.cargado_por || "")}${x.nota ? " · " + esc(x.nota) : ""}">✍️ A mano</span></p>` : ""}${x.corregido_en ? `<p class="mt-1"><span class="badge bg-sky-500/15 text-sky-200" title="${esc(x.correccion || "")}">✏️ Corregido · ${esc(x.corregido_por || "")}</span></p>` : ""}</td>
+        <td class="whitespace-nowrap">${puedeEditar("registros") ? `${!x.salida ? `<button class="btn btn-sm btn-pri mr-1" title="Cargar la salida a mano" onclick="abrirFichajeManual('${x.colaborador_id}','${fFechaISO(x.entrada)}')"><i class="fa-solid fa-hand"></i>Salida</button>` : ""}<button class="btn btn-sm btn-sec" title="Corregir lo que ya está cargado" onclick="abrirCorreccion(${x.id})"><i class="fa-solid fa-pen"></i></button>` : ""}</td></tr>`).join("")
       : `<tr><td colspan="10" class="text-center text-slate-400 py-6">Sin fichajes en ese período con este filtro.</td></tr>`}
     </tbody></table></div>
     ${rech?.length ? `<div class="card overflow-x-auto mt-6">
@@ -1631,13 +1632,15 @@ function abrirCorreccion(id) {
     <p class="text-sm text-slate-400 mb-4">${esc(x.colaboradores?.nombre)} · ${fFecha(x.entrada)}</p>
     <div class="space-y-3">
       <div><label class="lbl">Entrada</label><input type="datetime-local" id="coEnt" class="inp" onchange="coRecalc(${id})" value="${aLocalInput(x.entrada)}"></div>
-      <div><label class="lbl">Salida</label><input type="datetime-local" id="coSal" class="inp" onchange="coRecalc(${id})" value="${aLocalInput(x.salida)}"></div>
+      <div><label class="lbl">Salida</label>${x.salida ? `<input type="datetime-local" id="coSal" class="inp" onchange="coRecalc(${id})" value="${aLocalInput(x.salida)}">`
+        : `<input type="hidden" id="coSal" value=""><div class="inp text-sm text-slate-400 flex items-center justify-between gap-2"><span>Todavía no tiene salida.</span><button class="btn btn-sm btn-pri" onclick="cerrarModal();abrirFichajeManual('${x.colaborador_id}','${fFechaISO(x.entrada)}')"><i class="fa-solid fa-hand"></i>Cargar salida</button></div>`}</div>
       <div class="grid grid-cols-2 gap-3">
         <div><label class="lbl">Tardanza (min)</label><input type="number" min="0" id="coTar" class="inp" value="${x.tardanza_min}"></div>
         <div><label class="lbl">Salida anticipada (min)</label><input type="number" min="0" id="coAnt" class="inp" value="${x.salida_anticipada_min || 0}"></div>
       </div>
       <div class="max-w-[50%]"><label class="lbl">Pausas (min)</label><input type="number" min="0" id="coPau" class="inp" value="${x.pausa_min || 0}"></div>
-      <p class="text-xs text-slate-400">Horario de Argentina (UTC-3). Dejá la salida vacía si la jornada sigue abierta. Al cambiar la entrada o la salida, la tardanza y la salida anticipada se recalculan solas según el horario${x.hora_entrada_prog ? ` (${hm(x.hora_entrada_prog)}–${hm(x.hora_salida_prog)})` : ""}; podés ajustarlas a mano.</p>
+      <div><label class="lbl">Motivo de la corrección (opcional)</label><input id="coMot" class="inp" maxlength="150" placeholder="Ej: fichó tarde la salida por error"></div>
+      <p class="text-xs text-slate-400">Horario de Argentina (UTC-3). El lápiz sirve para <b>corregir</b> lo que ya está cargado; queda registrado quién lo corrigió y qué cambió. Para cargar una entrada o salida que falta, usá <b>✋ Cargar a mano</b>. Al cambiar la entrada o la salida, la tardanza y la salida anticipada se recalculan solas según el horario${x.hora_entrada_prog ? ` (${hm(x.hora_entrada_prog)}–${hm(x.hora_salida_prog)})` : ""}; podés ajustarlas a mano.</p>
       <div class="flex justify-end gap-2"><button class="btn btn-sec" onclick="cerrarModal()">Cancelar</button><button class="btn btn-pri" onclick="guardarCorreccion(${id})">Guardar</button></div>
     </div>`);
 }
@@ -1663,9 +1666,12 @@ function coRecalc(id) {
 async function guardarCorreccion(id) {
   const ent = $("coEnt").value, sal = $("coSal").value;
   if (!ent) return toast("Falta la entrada", "error");
-  if (sal && sal < ent) return toast("La salida no puede ser anterior a la entrada", "error");
-  const { error } = await sb.from("registros").update({ entrada: ent + ":00-03:00", salida: sal ? sal + ":00-03:00" : null, tardanza_min: Math.max(0, +$("coTar").value || 0), salida_anticipada_min: Math.max(0, +$("coAnt").value || 0), pausa_min: Math.max(0, +$("coPau").value || 0) }).eq("id", id);
-  if (error) return toast(errTxt(error), "error");
+  if (sal && sal <= ent) return toast("La salida tiene que ser posterior a la entrada", "error");
+  try {
+    await rpc("rl_corregir_fichaje", { p_id: id, p_entrada: ent + ":00-03:00", p_salida: sal ? sal + ":00-03:00" : null,
+      p_tardanza: Math.max(0, +$("coTar").value || 0), p_anticipada: Math.max(0, +$("coAnt").value || 0), p_pausa: Math.max(0, +$("coPau").value || 0),
+      p_motivo: $("coMot")?.value.trim() || null });
+  } catch (e) { return toast(errTxt(e), "error"); }
   cerrarModal(); toast("Fichaje corregido"); buscarRegistros();
 }
 function exportarRegistros() {
@@ -1682,11 +1688,11 @@ function exportarRegistros() {
   const d = S.cache.registros || [];
   if (!d.length) return toast("No hay registros para exportar", "error");
   const lug = l => l === "remoto" ? "Remoto" : l === "oficina" ? "Oficina" : "";
-  const filas = [["Fecha", "Colaborador", "DNI", "Horario", "Día laborable", "Oficina", "Entrada", "Lugar entrada", "Salida", "Lugar salida", "Pausas (min)", "Minutos trabajados", "Tardanza (min)", "Salida anticipada (min)", "Origen", "Cargado por", "Nota"]].concat(
+  const filas = [["Fecha", "Colaborador", "DNI", "Horario", "Día laborable", "Oficina", "Entrada", "Lugar entrada", "Salida", "Lugar salida", "Pausas (min)", "Minutos trabajados", "Tardanza (min)", "Salida anticipada (min)", "Origen", "Cargado por", "Nota", "Correcciones"]].concat(
     d.slice().reverse().map(x => [fFecha(x.entrada), x.colaboradores?.nombre, x.colaboradores?.dni,
       x.hora_entrada_prog ? `${hm(x.hora_entrada_prog)}-${hm(x.hora_salida_prog)}` : "", x.dia_laborable === false ? "No" : "Sí",
       x.oficina?.nombre || "", fHora(x.entrada), lug(x.entrada_lugar), x.salida ? fHora(x.salida) : "", lug(x.salida_lugar),
-      x.pausa_min || 0, x.salida ? Math.round(minutosTrabajados(x)) : "", x.tardanza_min, x.salida_anticipada_min || 0, x.manual ? "Cargado a mano" : "QR", x.cargado_por || "", x.nota || ""]));
+      x.pausa_min || 0, x.salida ? Math.round(minutosTrabajados(x)) : "", x.tardanza_min, x.salida_anticipada_min || 0, x.manual ? "Cargado a mano" : "QR", x.cargado_por || "", x.nota || "", x.correccion || ""]));
   const csv = "﻿" + filas.map(r => r.map(v => `"${String(v ?? "").replace(/"/g, '""')}"`).join(";")).join("\r\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
