@@ -1456,9 +1456,81 @@ async function buscarRegistros() {
   const [{ data, error }, { data: rech }] = await Promise.all([q, qr]);
   if (!$("regRes")) return; // se cambió de pestaña mientras cargaba
   if (error) return $("regRes").innerHTML = `<p class="text-red-400">${esc(error.message)}</p>`;
+  // Quién no fichó: colaboradores activos con ese día laborable, sin fichaje, sin licencia y sin feriado.
+  let nof = [];
+  try { nof = await calcularNoFicharon(f, data); } catch (e) { console.warn(e); }
+  if (!$("regRes")) return;
+  S.regDatos = { data, rech: rech || [], nof };
+  pintarRegistros();
+}
+async function calcularNoFicharon(f, data) {
+  const dias = []; for (let d = f.desde; d <= f.hasta && d <= hoyISO() && dias.length < 62; d = sumarDias(d, 1)) dias.push(d);
+  if (!dias.length) return [];
+  const full = esFull();
+  const [{ data: aus }, { data: fer }, { data: prop }] = await Promise.all([
+    full ? sb.from("ausencias").select("colaborador_id, desde, hasta, tipo").eq("empresa_id", S.empresaId).lte("desde", f.hasta).gte("hasta", f.desde) : Promise.resolve({ data: [] }),
+    full && S.empresa.respeta_feriados !== false ? sb.from("feriados").select("fecha, tipo").gte("fecha", f.desde).lte("fecha", f.hasta) : Promise.resolve({ data: [] }),
+    full ? sb.from("empresa_dias_no_laborables").select("fecha").eq("empresa_id", S.empresaId).gte("fecha", f.desde).lte("fecha", f.hasta) : Promise.resolve({ data: [] }),
+  ]);
+  const noLab = new Set([...(fer || []).filter(x => x.tipo !== "no_laborable").map(x => x.fecha), ...(prop || []).map(x => x.fecha)]);
+  const fichados = new Set(data.map(x => x.colaborador_id + "|" + fFechaISO(x.entrada)));
+  const tol = +(S.empresa.tolerancia_min || 0);
+  const ahora = new Date().toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "America/Argentina/Buenos_Aires" });
+  const aMin = t => { const [h, m] = String(t).split(":").map(Number); return h * 60 + m; };
+  const cols = (S.cache.colaboradores || []).filter(c => c.estado === "Activa" && (!f.col || c.id === f.col));
+  const out = [];
+  for (const d of dias) {
+    if (noLab.has(d)) continue;
+    const dow = new Date(d + "T12:00:00-03:00").getDay() || 7;
+    for (const c of cols) {
+      if (!(c.dias || []).map(Number).includes(dow)) continue;
+      if (c.fecha_ingreso && d < c.fecha_ingreso) continue;
+      const hd = c.horario_dias?.[dow] || c.horario_dias?.[String(dow)];
+      const ent = hd?.e || c.hora_entrada, sal = hd?.s || c.hora_salida;
+      if (d === hoyISO() && ent && aMin(ahora) < aMin(ent) + tol) continue; // todavía no pasó su hora de entrada
+      if (fichados.has(c.id + "|" + d)) continue;
+      const lic = (aus || []).find(a => a.colaborador_id === c.id && a.desde <= d && a.hasta >= d);
+      out.push({ fecha: d, col: c, ent, sal, lic: lic?.tipo || null });
+    }
+  }
+  return out.sort((a, b) => b.fecha.localeCompare(a.fecha) || a.col.nombre.localeCompare(b.col.nombre));
+}
+function fFechaISO(ts) { return new Date(ts).toLocaleDateString("en-CA", { timeZone: "America/Argentina/Buenos_Aires" }); }
+const VISTAS_REG = [
+  ["todos", "Todos", x => true],
+  ["completos", "Con entrada y salida", x => !!x.salida],
+  ["sin_salida", "Sin fichar la salida", x => !x.salida],
+  ["tarde", "Llegaron tarde", x => x.tardanza_min > 0],
+  ["antes", "Se fueron antes", x => x.salida_anticipada_min > 0],
+  ["mano", "Cargados a mano", x => !!x.manual],
+  ["no_ficharon", "No ficharon", null],
+];
+function verRegistros(v) { S.regVista = v; pintarRegistros(); }
+function pintarRegistros() {
+  const R = S.regDatos; if (!R || !$("regRes")) return;
+  const { data: todos, rech, nof } = R;
+  const vista = S.regVista || "todos";
+  const nofSinLic = nof.filter(x => !x.lic);
+  const cuenta = k => k === "no_ficharon" ? nofSinLic.length : todos.filter(VISTAS_REG.find(v => v[0] === k)[2]).length;
+  const chips = `<div class="flex flex-wrap gap-2 mb-3">${VISTAS_REG.map(([k, t]) => `<button class="badge cursor-pointer ${vista === k ? "" : "bg-slate-600/30 text-slate-300"}" style="padding:.35rem .7rem;${vista === k ? `background:${k === "no_ficharon" ? "#B91C1C" : "#166534"};color:#fff;` : ""}" onclick="verRegistros('${k}')">${t} <b class="ml-1">${cuenta(k)}</b></button>`).join("")}</div>`;
+  if (vista === "no_ficharon") {
+    S.cache.registros = [];
+    $("regRes").innerHTML = chips + `
+      <p class="text-sm text-slate-400 mb-3">${nofSinLic.length} sin fichar${nof.length > nofSinLic.length ? ` · ${nof.length - nofSinLic.length} de licencia o vacaciones` : ""} · Se cuentan los días laborables de cada uno (sin feriados) y, hoy, solo a quienes ya pasó su hora de entrada más la tolerancia.</p>
+      <div class="card overflow-x-auto"><table class="tbl"><thead><tr><th>Fecha</th><th>Colaborador</th><th>DNI</th><th>Cargo</th><th>Horario</th><th>Estado</th><th></th></tr></thead><tbody>
+      ${nof.length ? nof.map(x => `<tr><td>${fFecha(x.fecha + "T12:00:00-03:00")}</td><td class="font-medium">${esc(x.col.nombre)}</td><td class="font-mono text-xs">${esc(x.col.dni)}</td><td class="text-xs">${esc(x.col.cargo || "—")}</td>
+        <td class="whitespace-nowrap">${x.ent ? `${hm(x.ent)}–${hm(x.sal)}` : "—"}</td>
+        <td>${x.lic ? `<span class="badge bg-sky-500/15 text-sky-200">${esc(x.lic)}</span>` : `<span class="badge bg-red-500/15 text-red-300">No fichó</span>`}</td>
+        <td>${!x.lic && puedeEditar("registros") ? `<button class="btn btn-sm btn-sec" title="Cargar a mano" onclick="abrirFichajeManual('${x.col.id}','${x.fecha}')"><i class="fa-solid fa-hand"></i></button>` : ""}</td></tr>`).join("")
+        : `<tr><td colspan="7" class="text-center text-slate-400 py-6">Todos ficharon en ese período. 🎉</td></tr>`}
+      </tbody></table></div>`;
+    S.regNoFicharon = nof;
+    return;
+  }
+  const data = todos.filter(VISTAS_REG.find(v => v[0] === vista)[2]);
   S.cache.registros = data;
   const totMin = data.reduce((s, x) => s + (x.salida ? minutosTrabajados(x) : 0), 0);
-  $("regRes").innerHTML = `
+  $("regRes").innerHTML = chips + `
     <p class="text-sm text-slate-400 mb-3">${data.length} fichaje(s) · ${fMin(totMin)} trabajadas (jornadas cerradas) · ${data.filter(x => x.tardanza_min > 0).length} tardanza(s) · ${data.filter(x => x.salida_anticipada_min > 0).length} salida(s) anticipada(s)${data.length === 2000 ? " · <span class='text-amber-300'>se muestran los primeros 2000, acotá las fechas</span>" : ""}</p>
     <div class="card overflow-x-auto"><table class="tbl"><thead><tr><th>Fecha</th><th>Colaborador</th><th>DNI</th><th>Horario</th><th>Oficina</th><th>Entrada</th><th>Salida</th><th>Tiempo</th><th>Estado</th><th></th></tr></thead><tbody>
       ${data.length ? data.map(x => `<tr><td>${fFecha(x.entrada)}</td><td class="font-medium">${esc(x.colaboradores?.nombre)}</td><td class="font-mono text-xs">${esc(x.colaboradores?.dni)}</td>
@@ -1467,7 +1539,7 @@ async function buscarRegistros() {
         <td class="whitespace-nowrap">${fHora(x.entrada)}${iconoLugar(x.entrada_lugar, x.entrada_distancia_m)}</td><td class="whitespace-nowrap">${x.salida ? (fFecha(x.salida) !== fFecha(x.entrada) ? fFecha(x.salida) + " " : "") + fHora(x.salida) + iconoLugar(x.salida_lugar, x.salida_distancia_m) : "—"}</td>
         <td>${x.salida ? fMin(minutosTrabajados(x)) : "—"}</td><td>${estadoBadge(x)}${x.manual ? `<p class="mt-1"><span class="badge bg-amber-500/15 text-amber-200" title="Cargado por ${esc(x.cargado_por || "")}${x.nota ? " · " + esc(x.nota) : ""}">✍️ A mano</span></p>` : ""}</td>
         <td>${puedeEditar("registros") ? `<button class="btn btn-sm btn-sec" title="Corregir" onclick="abrirCorreccion(${x.id})"><i class="fa-solid fa-pen"></i></button>` : ""}</td></tr>`).join("")
-      : `<tr><td colspan="10" class="text-center text-slate-400 py-6">Sin fichajes en ese período.</td></tr>`}
+      : `<tr><td colspan="10" class="text-center text-slate-400 py-6">Sin fichajes en ese período con este filtro.</td></tr>`}
     </tbody></table></div>
     ${rech?.length ? `<div class="card overflow-x-auto mt-6">
       <div class="px-4 py-3 border-b border-slate-700 font-semibold text-sm"><i class="fa-solid fa-shield-halved text-red-400 mr-1"></i>Intentos rechazados (${rech.length})</div>
@@ -1482,7 +1554,7 @@ function iconoLugar(lugar, dist) {
   return ` <span title="${t}" class="text-xs">${lugar === "remoto" ? "🏠" : "🏢"}</span>`;
 }
 // Cargar un fichaje a mano (quien no tiene celular, o se olvidó de fichar)
-async function abrirFichajeManual() {
+async function abrirFichajeManual(colId, fecha) {
   const { data: ofis } = await sb.from("oficinas").select("id, nombre").eq("empresa_id", S.empresaId).eq("activa", true).order("nombre");
   const cols = (S.cache.colaboradores || []).filter(c => c.estado === "Activa");
   abrirModal(`
@@ -1505,6 +1577,8 @@ async function abrirFichajeManual() {
       <p id="fmErr" class="text-red-400 text-sm min-h-[1.25rem]"></p>
       <div class="flex justify-end gap-2"><button class="btn btn-sec" onclick="cerrarModal()">Cancelar</button><button id="fmBtn" class="btn btn-pri" onclick="guardarFichajeManual()">Guardar</button></div>
     </div>`);
+  if (fecha) $("fmFecha").value = fecha;
+  if (colId) { $("fmCol").value = colId; fmSugerir(); }
 }
 function fmSugerir() {
   const c = (S.cache.colaboradores || []).find(x => x.id === $("fmCol").value);
@@ -1573,6 +1647,16 @@ async function guardarCorreccion(id) {
   cerrarModal(); toast("Fichaje corregido"); buscarRegistros();
 }
 function exportarRegistros() {
+  if ((S.regVista || "todos") === "no_ficharon") {
+    const n = S.regNoFicharon || [];
+    if (!n.length) return toast("No hay nada para exportar", "error");
+    const filas = [["Fecha", "Colaborador", "DNI", "Cargo", "Entraba", "Salía", "Estado"], ...n.map(x => [fFecha(x.fecha + "T12:00:00-03:00"), x.col.nombre, x.col.dni, x.col.cargo || "", hm(x.ent), hm(x.sal), x.lic || "No fichó"])];
+    const csv = "\ufeff" + filas.map(r => r.map(v => `"${String(v ?? "").replace(/"/g, '""')}"`).join(";")).join("\r\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    a.download = `no_ficharon_${S.empresa.nombre.replace(/\W+/g, "_")}_${S.filtroReg.desde}_${S.filtroReg.hasta}.csv`;
+    a.click(); URL.revokeObjectURL(a.href); return;
+  }
   const d = S.cache.registros || [];
   if (!d.length) return toast("No hay registros para exportar", "error");
   const lug = l => l === "remoto" ? "Remoto" : l === "oficina" ? "Oficina" : "";
