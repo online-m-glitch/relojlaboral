@@ -2332,6 +2332,7 @@ async function tabAvisos() {
       <label class="flex items-center gap-2"><input type="checkbox" id="tgAus" class="w-4 h-4" ${dest.avisar_ausencias ? "checked" : ""}>⚠️ Quién no fichó a horario (pasada la tolerancia)</label>
       <label class="flex items-center gap-2"><input type="checkbox" id="tgTar" class="w-4 h-4" ${dest.avisar_tardanzas ? "checked" : ""}>⏰ Quién llegó tarde</label>
       <label class="flex items-center gap-2"><input type="checkbox" id="tgRech" class="w-4 h-4" ${dest.avisar_rechazos ? "checked" : ""}>🚫 Intentos de fichaje rechazados</label>
+      <label class="flex items-start gap-2"><input type="checkbox" id="tgInf" class="w-4 h-4 mt-0.5" ${dest.avisar_informes !== false ? "checked" : ""}><span>📋 Informes del día: <b>estado de la mañana (10:00)</b> y <b>cierre (18:00)</b>, con ausentes, tardanzas, rechazos, salidas sin fichar y horas trabajadas</span></label>
     </div>
     <p class="font-semibold text-sm mb-2">De qué sucursales</p>
     <div class="space-y-2 text-sm mb-1">
@@ -2360,7 +2361,7 @@ async function guardarAvisos() {
   const algunas = document.querySelector('input[name="tgAlc"]:checked')?.value === "algunas";
   const ofis = algunas ? [...document.querySelectorAll("#tgOfis input:checked")].map(i => i.value) : null;
   if (algunas && !ofis.length) return toast("Elegí al menos una sucursal", "error");
-  try { await rpc("rl_telegram_preferencias", { p_oficinas: ofis, p_ausencias: $("tgAus").checked, p_tardanzas: $("tgTar").checked, p_rechazos: $("tgRech").checked }); toast("Avisos guardados"); }
+  try { await rpc("rl_telegram_preferencias", { p_oficinas: ofis, p_ausencias: $("tgAus").checked, p_tardanzas: $("tgTar").checked, p_rechazos: $("tgRech").checked, p_informes: $("tgInf").checked }); toast("Avisos guardados"); }
   catch (e) { toast(errTxt(e), "error"); }
 }
 async function probarTelegram() {
