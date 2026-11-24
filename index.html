@@ -1589,15 +1589,37 @@ function fmSugerir() {
   if (!$("fmEnt").value) $("fmEnt").value = he;
   if (!$("fmSal").value && f && f < hoyISO()) $("fmSal").value = hs;
   $("fmHor").textContent = trabaja ? `Su horario ese día: ${he} a ${hs}.` : "Ese día no figura entre sus días de trabajo.";
+  fmRevisarExistente(c.id, f);
+}
+// Si ese día ya tiene fichaje: con la jornada abierta se carga solo la salida; si está completa, se corrige con el lápiz.
+async function fmRevisarExistente(colId, fecha) {
+  S.fmExistente = null; $("fmErr").textContent = "";
+  $("fmEnt").disabled = false; $("fmBtn").disabled = false; $("fmBtn").innerHTML = "Guardar";
+  if (!colId || !fecha) return;
+  const { data } = await sb.from("registros").select("id, entrada, salida").eq("colaborador_id", colId)
+    .gte("entrada", fecha + "T00:00:00-03:00").lt("entrada", sumarDias(fecha, 1) + "T00:00:00-03:00").order("entrada", { ascending: false }).limit(1);
+  if ($("fmCol")?.value !== colId || $("fmFecha")?.value !== fecha) return;
+  const x = data?.[0]; if (!x) return;
+  S.fmExistente = x;
+  if (x.salida) {
+    $("fmErr").innerHTML = `Ese día ya tiene entrada (${fHora(x.entrada)}) y salida (${fHora(x.salida)}). Si hay que cambiarlas, usá el lápiz en Registros.`;
+    $("fmBtn").disabled = true;
+  } else {
+    $("fmEnt").value = fHora(x.entrada); $("fmEnt").disabled = true;
+    if (!$("fmSal").value) $("fmSal").value = hm($("fmHor").textContent.match(/a (\d\d:\d\d)/)?.[1] || "");
+    $("fmErr").innerHTML = `<span class="text-emerald-300">Ya fichó la entrada a las ${fHora(x.entrada)}. Completá la salida y guardá.</span>`;
+    $("fmBtn").innerHTML = "Guardar salida";
+  }
 }
 async function guardarFichajeManual() {
   if (!$("fmCol").value) return $("fmErr").textContent = "Elegí el colaborador.";
-  if (!$("fmFecha").value || !$("fmEnt").value) return $("fmErr").textContent = "Completá la fecha y la hora de entrada.";
+  if (!$("fmFecha").value || (!$("fmEnt").value && !S.fmExistente)) return $("fmErr").textContent = "Completá la fecha y la hora de entrada.";
+  if (S.fmExistente && !$("fmSal").value) return $("fmErr").textContent = "Completá la hora de salida.";
   $("fmBtn").disabled = true;
   try {
     await rpc("rl_fichaje_manual", { p_colab: $("fmCol").value, p_oficina: $("fmOfi").value || null, p_fecha: $("fmFecha").value, p_entrada: $("fmEnt").value,
       p_salida: $("fmSal").value || null, p_pausa: Math.max(0, +$("fmPau").value || 0), p_nota: $("fmNota").value.trim() });
-    cerrarModal(); toast("Fichaje cargado");
+    cerrarModal(); toast(S.fmExistente ? "Salida cargada" : "Fichaje cargado");
     buscarRegistros();
   } catch (e) { $("fmErr").textContent = errTxt(e); $("fmBtn").disabled = false; }
 }
