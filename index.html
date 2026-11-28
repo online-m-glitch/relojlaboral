@@ -1641,7 +1641,14 @@ function abrirCorreccion(id) {
       <div class="max-w-[50%]"><label class="lbl">Pausas (min)</label><input type="number" min="0" id="coPau" class="inp" value="${x.pausa_min || 0}"></div>
       <div><label class="lbl">Motivo de la corrección (opcional)</label><input id="coMot" class="inp" maxlength="150" placeholder="Ej: fichó tarde la salida por error"></div>
       <p class="text-xs text-slate-400">Horario de Argentina (UTC-3). El lápiz sirve para <b>corregir</b> lo que ya está cargado; queda registrado quién lo corrigió y qué cambió. Para cargar una entrada o salida que falta, usá <b>✋ Cargar a mano</b>. Al cambiar la entrada o la salida, la tardanza y la salida anticipada se recalculan solas según el horario${x.hora_entrada_prog ? ` (${hm(x.hora_entrada_prog)}–${hm(x.hora_salida_prog)})` : ""}; podés ajustarlas a mano.</p>
-      <div class="flex justify-end gap-2"><button class="btn btn-sec" onclick="cerrarModal()">Cancelar</button><button class="btn btn-pri" onclick="guardarCorreccion(${id})">Guardar</button></div>
+      <div id="coBorrarBox" class="hidden rounded-xl p-3" style="background:#FEF2F2;border:1px solid #FCA5A5">
+        <p class="text-sm font-semibold" style="color:#991B1B">¿Borrar este fichaje?</p>
+        <p class="text-xs mt-1" style="color:#7F1D1D">La persona va a figurar como que no fichó ese día. Queda guardado quién lo borró, cuándo y por qué.</p>
+        <input id="coBorMot" class="inp mt-2" maxlength="200" placeholder="Motivo (obligatorio). Ej: cargado por error, no vino">
+        <div class="flex justify-end gap-2 mt-2"><button class="btn btn-sm btn-sec" onclick="$('coBorrarBox').classList.add('hidden')">No</button><button class="btn btn-sm" style="background:#B91C1C;color:#fff" onclick="borrarFichaje(${id})"><i class="fa-solid fa-trash"></i>Sí, borrar</button></div>
+      </div>
+      <div class="flex justify-between gap-2"><button class="btn btn-sec" style="color:#B91C1C" onclick="$('coBorrarBox').classList.remove('hidden');$('coBorMot').focus()"><i class="fa-solid fa-trash"></i>Borrar fichaje</button>
+        <div class="flex gap-2"><button class="btn btn-sec" onclick="cerrarModal()">Cancelar</button><button class="btn btn-pri" onclick="guardarCorreccion(${id})">Guardar</button></div></div>
     </div>`);
 }
 // Recalcula tardanza y salida anticipada al corregir la entrada o la salida (mismo criterio que el fichaje: con tolerancia en la entrada).
@@ -1662,6 +1669,13 @@ function coRecalc(id) {
     const real = new Date(sal + ":00-03:00").getTime();
     $("coAnt").value = Math.max(0, Math.round((finProg - real) / 60000));
   }
+}
+async function borrarFichaje(id) {
+  const mot = $("coBorMot").value.trim();
+  if (mot.length < 3) { $("coBorMot").focus(); return toast("Escribí el motivo del borrado", "error"); }
+  try { await rpc("rl_borrar_fichaje", { p_id: id, p_motivo: mot }); }
+  catch (e) { return toast(errTxt(e), "error"); }
+  cerrarModal(); toast("Fichaje borrado"); buscarRegistros();
 }
 async function guardarCorreccion(id) {
   const ent = $("coEnt").value, sal = $("coSal").value;
